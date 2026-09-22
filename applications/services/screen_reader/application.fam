@@ -1,0 +1,10 @@
+App(
+    appid="screen_reader",
+    name="ScreenReaderSrv",
+    apptype=FlipperAppType.SERVICE,
+    entry_point="screen_reader_srv",
+    cdefines=["SRV_SCREEN_READER"],
+    requires=["gui", "input", "cli"],
+    stack_size=3 * 1024,
+    order=110,
+)
