@@ -195,12 +195,36 @@ static void sr_cli_watch(PipeSide* pipe, ScreenReader* sr) {
             if(c == CliKeyETX) {
                 run = false;
             } else if(c == CliKeyEsc) {
-                char c2 = 0, c3 = 0;
-                if(pipe_receive(pipe, &c2, 1) && c2 == '[' && pipe_receive(pipe, &c3, 1)) {
-                    if(c3 == 'A') sr_cli_press(input, InputKeyUp);
-                    if(c3 == 'B') sr_cli_press(input, InputKeyDown);
-                    if(c3 == 'C') sr_cli_press(input, InputKeyRight);
-                    if(c3 == 'D') sr_cli_press(input, InputKeyLeft);
+                // Arrow keys arrive as ESC [ A..D within a few milliseconds. Read the rest
+                // of a control sequence only while bytes keep arriving, so a bare Escape
+                // press or a truncated sequence never blocks the loop. Sequences with
+                // parameters (ESC [ 3 ~, ESC [ 1 ; 5 C) are consumed and ignored.
+                char seq[8];
+                size_t got = 0;
+                bool complete = false;
+                uint32_t started = furi_get_tick();
+                while(got < sizeof(seq) && (furi_get_tick() - started) < 50) {
+                    if(!pipe_bytes_available(pipe)) {
+                        furi_delay_ms(2);
+                        continue;
+                    }
+                    char b = getchar();
+                    if(got == 0) {
+                        if(b != '[') break; // not a control sequence, drop it
+                        seq[got++] = b;
+                        continue;
+                    }
+                    seq[got++] = b;
+                    if(b >= 0x40 && b <= 0x7E) { // final byte of the sequence
+                        complete = true;
+                        break;
+                    }
+                }
+                if(complete && got == 2) {
+                    if(seq[1] == 'A') sr_cli_press(input, InputKeyUp);
+                    if(seq[1] == 'B') sr_cli_press(input, InputKeyDown);
+                    if(seq[1] == 'C') sr_cli_press(input, InputKeyRight);
+                    if(seq[1] == 'D') sr_cli_press(input, InputKeyLeft);
                 }
             } else if(c == CliKeyCR || c == CliKeyLF) {
                 sr_cli_press(input, InputKeyOk);
