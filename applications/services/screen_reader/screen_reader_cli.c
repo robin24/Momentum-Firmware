@@ -43,6 +43,19 @@ static const char* sr_font_name(uint8_t font) {
     }
 }
 
+static const char* sr_button_name(uint8_t side) {
+    switch(side) {
+    case 1:
+        return "left";
+    case 2:
+        return "center";
+    case 3:
+        return "right";
+    default:
+        return "?";
+    }
+}
+
 static const char* sr_kind_name(SrAnnKind kind) {
     switch(kind) {
     case SrAnnFocus:
@@ -87,6 +100,7 @@ static void sr_cli_screen(ScreenReader* sr) {
             r->inverted ? " inverted" : "",
             r->focus ? " FOCUS" : "");
         if(r->count) printf(" %u/%u", (unsigned)r->index, (unsigned)r->count);
+        if(r->button) printf(" button=%s", sr_button_name(r->button));
         printf(" \"%s\"\r\n", r->text);
     }
     free(frame);

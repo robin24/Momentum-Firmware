@@ -47,6 +47,7 @@ typedef struct {
     uint8_t font; /**< Font, or CANVAS_TAP_FONT_CUSTOM */
     bool inverted; /**< logical colour was ColorWhite, i.e. text on a filled box */
     bool focus; /**< a focus hint applied to this string */
+    uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
     uint16_t index; /**< 1-based position from the focus hint, 0 if unknown */
     uint16_t count; /**< item count from the focus hint, 0 if unknown */
     char text[CANVAS_TAP_TEXT_MAX];
@@ -73,6 +74,7 @@ struct Canvas {
     uint8_t tap_layer;
     uint8_t tap_font;
     bool tap_hint_focus;
+    uint8_t tap_hint_button;
     uint16_t tap_hint_index;
     uint16_t tap_hint_count;
     bool tap_hint_full;
@@ -176,6 +178,9 @@ void canvas_tap_flush(Canvas* canvas);
 
 /** The next drawn string is the focused item. index is 1-based, 0 if unknown. */
 void canvas_tap_hint_focus(Canvas* canvas, uint16_t index, uint16_t count);
+
+/** The next drawn string is a dialog button label: 1 left, 2 center, 3 right. */
+void canvas_tap_hint_button(Canvas* canvas, uint8_t side);
 
 /** The next drawn string is a shortened or scrolled fragment of full_text.
  * With verify_prefix, the hint is used only if the drawn string (minus a trailing "...")

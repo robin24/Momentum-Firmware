@@ -3,7 +3,9 @@
 #include <stdio.h>
 
 #define SR_ROW_Y_TOLERANCE 2
-#define SR_BUTTON_ROW_Y    54
+// The dialog button helpers draw their label at y=61; four row lists still draw their last
+// baseline at y=60, so only y=61 and below is a button by geometry.
+#define SR_BUTTON_ROW_Y    61
 #define SR_TITLE_MAX_Y     26
 #define SR_SPONTANEOUS_MS  1500
 #define SR_SPONTANEOUS_MAX 80
@@ -49,12 +51,29 @@ static bool sr_record_is_status(const SrRecord* r) {
 }
 
 static bool sr_record_is_button(const SrRecord* r) {
-    return r->inverted && !r->focus && r->y >= SR_BUTTON_ROW_Y &&
-           r->font == SrFontSecondary && !sr_record_is_status(r);
+    if(sr_record_is_status(r)) return false;
+    if(r->button != 0) return true;
+    // No hint: guess from the geometry, for third party apps.
+    return r->inverted && !r->focus && r->y >= SR_BUTTON_ROW_Y && r->font == SrFontSecondary;
+}
+
+static SrRowKind sr_record_row_kind(bool status, bool button, bool focus) {
+    if(status) return SrRowStatus;
+    if(button) return SrRowButton;
+    return focus ? SrRowFocus : SrRowNormal;
 }
 
 static bool sr_is_arrow_token(const char* text) {
     return strcmp(text, "<") == 0 || strcmp(text, ">") == 0;
+}
+
+/** A file browser row that is still loading is drawn as a run of dashes. */
+static bool sr_is_dashes(const char* text) {
+    if(*text == '\0') return false;
+    for(const char* p = text; *p; p++) {
+        if(*p != '-') return false;
+    }
+    return true;
 }
 
 void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
@@ -92,12 +111,16 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         const SrRecord* r = &frame->records[order[k]];
         char text[SR_TEXT_MAX];
         sr_normalize(r->text, text, sizeof(text));
-        if(text[0] == '\0' || sr_is_arrow_token(text)) continue;
+        if(strcmp(text, ". .") == 0) sr_copy(text, sizeof(text), "Parent folder");
+        if(text[0] == '\0' || sr_is_arrow_token(text) || sr_is_dashes(text)) continue;
 
         bool status = sr_record_is_status(r);
         bool button = sr_record_is_button(r);
-        bool same_row = row && !button && row->kind != SrRowButton &&
-                        (status ? row->kind == SrRowStatus : row->kind != SrRowStatus) &&
+        bool focus = r->focus || (!any_focus_hint && r->inverted && !button && !status);
+        // A record only joins the row above it when it reads the same way. On the on screen
+        // keyboard every key of a row shares one baseline, so the selected key is its own row.
+        SrRowKind kind = sr_record_row_kind(status, button, focus);
+        bool same_row = row && kind != SrRowButton && row->kind == kind &&
                         (r->y - row->y) <= SR_ROW_Y_TOLERANCE &&
                         (row->y - r->y) <= SR_ROW_Y_TOLERANCE;
         if(!same_row) {
@@ -110,13 +133,12 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             row->x = r->x;
             row->y = r->y;
             row->font = r->font;
-            row->kind = status ? SrRowStatus : (button ? SrRowButton : SrRowNormal);
+            row->kind = kind;
+            row->button = r->button;
         }
         if(row->text[0] != '\0') sr_append(row->text, sizeof(row->text), " ");
         sr_append(row->text, sizeof(row->text), text);
 
-        bool focus = r->focus || (!any_focus_hint && r->inverted && !button && !status);
-        if(focus && row->kind == SrRowNormal) row->kind = SrRowFocus;
         if(r->count && !row->count) {
             row->index = r->index;
             row->count = r->count;
@@ -152,6 +174,10 @@ static void sr_append_position(char* out, size_t out_size, const SrRow* row) {
 }
 
 static const char* sr_button_side(const SrRow* row) {
+    if(row->button == 1) return "left";
+    if(row->button == 2) return "center";
+    if(row->button == 3) return "right";
+    // No hint: guess from where the label sits, for third party apps.
     if(row->x < 40) return "left";
     if(row->x > 88) return "right";
     return "center";
@@ -247,7 +273,8 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
     return total > 0 && kept * 2 < total;
 }
 
-static void sr_screen_announcement(const SrModel* model, const SrScreen* s, char* out, size_t out_size) {
+static void
+    sr_screen_announcement(const SrModel* model, const SrScreen* s, char* out, size_t out_size) {
     out[0] = '\0';
     char focus[SR_ANN_TEXT_MAX];
     sr_screen_focus_text(s, focus, sizeof(focus));
@@ -275,7 +302,8 @@ static void sr_screen_announcement(const SrModel* model, const SrScreen* s, char
     if(s->overflow) sr_append(out, out_size, ", and more");
 }
 
-static bool sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* out, size_t out_size) {
+static bool
+    sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* out, size_t out_size) {
     if(!cur->has_keyboard || !prev->has_keyboard) return false;
     for(uint8_t i = 0; i < cur->row_count; i++) {
         const SrRow* now = &cur->rows[i];
@@ -283,7 +311,8 @@ static bool sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* 
         for(uint8_t j = 0; j < prev->row_count; j++) {
             const SrRow* was = &prev->rows[j];
             if(was->kind != SrRowNormal) continue;
-            if((now->y - was->y) > SR_ROW_Y_TOLERANCE || (was->y - now->y) > SR_ROW_Y_TOLERANCE) continue;
+            if((now->y - was->y) > SR_ROW_Y_TOLERANCE || (was->y - now->y) > SR_ROW_Y_TOLERANCE)
+                continue;
             size_t ln = strlen(now->text), lw = strlen(was->text);
             if(ln == lw + 1 && strncmp(now->text, was->text, lw) == 0) {
                 char c = now->text[lw];
@@ -317,7 +346,12 @@ size_t sr_model_process(
 
     char text[SR_ANN_TEXT_MAX];
     bool first = !model->have_prev;
-    bool changed = first || sr_screen_changed(&model->prev, cur);
+    // The desktop keeps redrawing its dolphin and its speech bubbles. Staying on it is never
+    // a new screen, so bubble text arrives as a rate limited change and a bubble that vanishes
+    // says nothing at all.
+    bool stay_on_desktop = !first && model->prev.content_layer == SrLayerDesktop &&
+                           cur->content_layer == SrLayerDesktop;
+    bool changed = !stay_on_desktop && (first || sr_screen_changed(&model->prev, cur));
 
     if(changed) {
         if(cur->has_content) {
@@ -354,7 +388,8 @@ size_t sr_model_process(
                 sr_append(text, sizeof(text), row->text);
             }
             if(text[0] != '\0') {
-                bool allowed = key_recent || (now_ms - model->last_spontaneous_ms) >= SR_SPONTANEOUS_MS;
+                bool allowed = key_recent ||
+                               (now_ms - model->last_spontaneous_ms) >= SR_SPONTANEOUS_MS;
                 if(allowed) {
                     if(!key_recent) {
                         model->last_spontaneous_ms = now_ms;

@@ -30,6 +30,7 @@ Canvas* canvas_init(void) {
     canvas->tap_layer = CANVAS_TAP_LAYER_UNKNOWN;
     canvas->tap_font = FontSecondary;
     canvas->tap_hint_focus = false;
+    canvas->tap_hint_button = 0;
     canvas->tap_hint_full = false;
     canvas->tap_run_active = false;
 
@@ -89,11 +90,16 @@ static void canvas_tap_fill(Canvas* canvas, CanvasTapRecord* record, int32_t x, 
         record->count = canvas->tap_hint_count;
         canvas->tap_hint_focus = false;
     }
+    record->button = canvas->tap_hint_button;
+    canvas->tap_hint_button = 0;
 }
 
+/** Only a string that was actually shortened may claim a full text hint: it has to end with
+ * the ellipsis, otherwise the hint belongs to some other string. */
 static bool canvas_tap_is_prefix_fragment(const char* drawn, const char* full) {
     size_t len = strlen(drawn);
-    if(len >= 3 && strcmp(drawn + len - 3, "...") == 0) len -= 3;
+    if(len < 3 || strcmp(drawn + len - 3, "...") != 0) return false;
+    len -= 3;
     return strncmp(drawn, full, len) == 0;
 }
 
@@ -107,6 +113,7 @@ void canvas_tap_flush(Canvas* canvas) {
 static void canvas_tap_text(Canvas* canvas, int32_t x, int32_t y, const char* str) {
     if(!canvas->tap_callback) {
         canvas->tap_hint_focus = false;
+        canvas->tap_hint_button = 0;
         canvas->tap_hint_full = false;
         return;
     }
@@ -127,17 +134,18 @@ static void canvas_tap_text(Canvas* canvas, int32_t x, int32_t y, const char* st
 static void canvas_tap_glyph(Canvas* canvas, int32_t x, int32_t y, uint16_t ch) {
     if(!canvas->tap_callback) {
         canvas->tap_hint_focus = false;
+        canvas->tap_hint_button = 0;
         canvas->tap_hint_full = false;
         return;
     }
     canvas->tap_hint_full = false;
     if(ch < 0x20 || ch > 0x7E) ch = '?';
     bool inverted = canvas_tap_logical_inverted(canvas);
-    bool continues = canvas->tap_run_active && !canvas->tap_hint_focus &&
-                     canvas->tap_run.y == y && canvas->tap_run.layer == canvas->tap_layer &&
-                     canvas->tap_run.font == canvas->tap_font &&
-                     canvas->tap_run.inverted == inverted && x >= canvas->tap_run_next_x &&
-                     strlen(canvas->tap_run.text) < CANVAS_TAP_TEXT_MAX - 1;
+    bool continues =
+        canvas->tap_run_active && !canvas->tap_hint_focus && !canvas->tap_hint_button &&
+        canvas->tap_run.y == y && canvas->tap_run.layer == canvas->tap_layer &&
+        canvas->tap_run.font == canvas->tap_font && canvas->tap_run.inverted == inverted &&
+        x >= canvas->tap_run_next_x && strlen(canvas->tap_run.text) < CANVAS_TAP_TEXT_MAX - 1;
     if(!continues) {
         canvas_tap_flush(canvas);
         canvas_tap_fill(canvas, &canvas->tap_run, x, y);
@@ -153,6 +161,7 @@ void canvas_tap_set_callback(Canvas* canvas, CanvasTapCallback callback, void* c
     furi_check(canvas);
     canvas->tap_run_active = false;
     canvas->tap_hint_focus = false;
+    canvas->tap_hint_button = 0;
     canvas->tap_hint_full = false;
     canvas->tap_callback = callback;
     canvas->tap_context = context;
@@ -162,6 +171,7 @@ void canvas_tap_set_layer(Canvas* canvas, uint8_t layer) {
     furi_assert(canvas);
     canvas_tap_flush(canvas);
     canvas->tap_hint_focus = false;
+    canvas->tap_hint_button = 0;
     canvas->tap_hint_full = false;
     canvas->tap_layer = layer;
 }
@@ -171,6 +181,11 @@ void canvas_tap_hint_focus(Canvas* canvas, uint16_t index, uint16_t count) {
     canvas->tap_hint_focus = true;
     canvas->tap_hint_index = index;
     canvas->tap_hint_count = count;
+}
+
+void canvas_tap_hint_button(Canvas* canvas, uint8_t side) {
+    furi_assert(canvas);
+    canvas->tap_hint_button = side;
 }
 
 void canvas_tap_hint_full_text(Canvas* canvas, const char* full_text, bool verify_prefix) {

@@ -48,6 +48,7 @@ typedef struct {
     uint8_t font;
     bool inverted; /**< drawn in white, i.e. on a filled box */
     bool focus; /**< a module marked this string as the focused item */
+    uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
     uint16_t index; /**< 1-based position from the module, 0 if unknown */
     uint16_t count; /**< item count from the module, 0 if unknown */
     char text[SR_TEXT_MAX];
@@ -75,6 +76,7 @@ typedef struct {
     int16_t y;
     uint8_t font;
     SrRowKind kind;
+    uint8_t button; /**< button side hint of the first record, 0 if none */
     uint16_t index;
     uint16_t count;
 } SrRow;

@@ -1,6 +1,7 @@
 #include "assets_icons.h"
 #include "toolbox/path.h"
 #include <furi.h>
+#include <gui/canvas_i.h>
 #include "../archive_i.h"
 #include "archive_browser_view.h"
 #include "../helpers/archive_browser.h"
@@ -304,6 +305,9 @@ static void draw_list_item(
         canvas_draw_icon(canvas, 2 + x_offset, 16 + i * FRAME_HEIGHT, ArchiveItemIcons[file_type]);
     }
 
+    if(!model->list_loading && model->item_idx == idx) {
+        canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
+    }
     elements_scrollable_text_line(
         canvas,
         15 + x_offset,

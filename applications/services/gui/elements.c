@@ -181,6 +181,7 @@ void elements_button_left(Canvas* canvas, const char* str) {
 
     canvas_invert_color(canvas);
     canvas_draw_icon(canvas, x + horizontal_offset, y - icon_v_offset, &I_ButtonLeft_4x7);
+    canvas_tap_hint_button(canvas, 1);
     canvas_draw_str(
         canvas, x + horizontal_offset + icon_width_with_offset, y - vertical_offset, str);
     canvas_invert_color(canvas);
@@ -208,6 +209,7 @@ void elements_button_right(Canvas* canvas, const char* str) {
     canvas_draw_line(canvas, x - button_width - 3, y, x - button_width - 3, y - button_height + 2);
 
     canvas_invert_color(canvas);
+    canvas_tap_hint_button(canvas, 3);
     canvas_draw_str(canvas, x - button_width + horizontal_offset, y - vertical_offset, str);
     canvas_draw_icon(
         canvas, x - horizontal_offset - icon->width, y - icon_v_offset, &I_ButtonRight_4x7);
@@ -306,6 +308,7 @@ void elements_button_center(Canvas* canvas, const char* str) {
 
     canvas_invert_color(canvas);
     canvas_draw_icon(canvas, x + horizontal_offset, y - icon_v_offset, &I_ButtonCenter_7x7);
+    canvas_tap_hint_button(canvas, 2);
     canvas_draw_str(
         canvas, x + horizontal_offset + icon_width_with_offset, y - vertical_offset, str);
     canvas_invert_color(canvas);

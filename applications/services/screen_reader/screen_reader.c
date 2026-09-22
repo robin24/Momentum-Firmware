@@ -70,6 +70,7 @@ static void sr_text(const CanvasTapRecord* record, void* context) {
     r->font = record->font;
     r->inverted = record->inverted;
     r->focus = record->focus;
+    r->button = record->button;
     r->index = record->index;
     r->count = record->count;
     strlcpy(r->text, record->text, sizeof(r->text));
