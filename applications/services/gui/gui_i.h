@@ -44,6 +44,14 @@
 
 ARRAY_DEF(ViewPortArray, ViewPort*, M_PTR_OPLIST);
 
+/** Screen reader tap: frame lifecycle plus the canvas text callback.
+ * All three run on the GUI thread with the GUI mutex held. */
+typedef struct {
+    void (*frame_begin)(void* context);
+    CanvasTapCallback text;
+    void (*frame_end)(void* context, uint8_t content_layer);
+} GuiTap;
+
 /** Gui structure */
 struct Gui {
     // Thread and lock
@@ -67,7 +75,14 @@ struct Gui {
 
     FuriMessageQueue* ascii_queue;
     FuriPubSub* ascii_events;
+
+    // Screen reader tap
+    const GuiTap* tap;
+    void* tap_context;
 };
+
+/** Install or remove (tap == NULL) the screen reader tap. */
+void gui_tap_set(Gui* gui, const GuiTap* tap, void* context);
 
 /** Find enabled ViewPort in ViewPortArray
  *

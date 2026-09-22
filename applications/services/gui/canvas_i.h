@@ -14,6 +14,10 @@
 
 #define ICON_DECOMPRESSOR_BUFFER_SIZE (128u * 64 / 8)
 
+#define CANVAS_TAP_TEXT_MAX      48
+#define CANVAS_TAP_LAYER_UNKNOWN 255
+#define CANVAS_TAP_FONT_CUSTOM   255
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -35,6 +39,21 @@ ARRAY_DEF(CanvasCallbackPairArray, CanvasCallbackPair, M_POD_OPLIST); //-V658
 
 ALGO_DEF(CanvasCallbackPairArray, CanvasCallbackPairArray_t);
 
+/** One drawn string, reported to the screen reader tap */
+typedef struct {
+    int16_t x; /**< absolute framebuffer x of the string start, after alignment */
+    int16_t y; /**< absolute framebuffer baseline y */
+    uint8_t layer; /**< GuiLayer being drawn, or CANVAS_TAP_LAYER_UNKNOWN */
+    uint8_t font; /**< Font, or CANVAS_TAP_FONT_CUSTOM */
+    bool inverted; /**< logical colour was ColorWhite, i.e. text on a filled box */
+    bool focus; /**< a focus hint applied to this string */
+    uint16_t index; /**< 1-based position from the focus hint, 0 if unknown */
+    uint16_t count; /**< item count from the focus hint, 0 if unknown */
+    char text[CANVAS_TAP_TEXT_MAX];
+} CanvasTapRecord;
+
+typedef void (*CanvasTapCallback)(const CanvasTapRecord* record, void* context);
+
 /** Canvas structure
  */
 struct Canvas {
@@ -47,6 +66,21 @@ struct Canvas {
     CompressIcon* compress_icon;
     CanvasCallbackPairArray_t canvas_callback_pair;
     FuriMutex* mutex;
+
+    // Screen reader text tap
+    CanvasTapCallback tap_callback;
+    void* tap_context;
+    uint8_t tap_layer;
+    uint8_t tap_font;
+    bool tap_hint_focus;
+    uint16_t tap_hint_index;
+    uint16_t tap_hint_count;
+    bool tap_hint_full;
+    bool tap_hint_verify;
+    char tap_hint_text[CANVAS_TAP_TEXT_MAX];
+    bool tap_run_active;
+    int16_t tap_run_next_x;
+    CanvasTapRecord tap_run;
 };
 
 /** Allocate memory and initialize canvas
@@ -130,6 +164,26 @@ void canvas_remove_framebuffer_callback(
     Canvas* canvas,
     CanvasCommitCallback callback,
     void* context);
+
+/** Install the screen reader tap. NULL callback disables it. GUI service only. */
+void canvas_tap_set_callback(Canvas* canvas, CanvasTapCallback callback, void* context);
+
+/** Tag the layer that is about to be drawn (GuiLayer value). */
+void canvas_tap_set_layer(Canvas* canvas, uint8_t layer);
+
+/** Report a pending glyph run. Call at frame end before the frame is handed over. */
+void canvas_tap_flush(Canvas* canvas);
+
+/** The next drawn string is the focused item. index is 1-based, 0 if unknown. */
+void canvas_tap_hint_focus(Canvas* canvas, uint16_t index, uint16_t count);
+
+/** The next drawn string is a shortened or scrolled fragment of full_text.
+ * With verify_prefix, the hint is used only if the drawn string (minus a trailing "...")
+ * is a prefix of full_text. */
+void canvas_tap_hint_full_text(Canvas* canvas, const char* full_text, bool verify_prefix);
+
+/** Report text that is shown as an icon (for example the Save key), as if drawn at x, y. */
+void canvas_tap_note(Canvas* canvas, int32_t x, int32_t y, const char* text);
 
 #ifdef __cplusplus
 }

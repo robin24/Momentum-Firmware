@@ -24,6 +24,15 @@ Canvas* canvas_init(void) {
     // Initialize mutex
     canvas->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
+    // Screen reader text tap starts disabled
+    canvas->tap_callback = NULL;
+    canvas->tap_context = NULL;
+    canvas->tap_layer = CANVAS_TAP_LAYER_UNKNOWN;
+    canvas->tap_font = FontSecondary;
+    canvas->tap_hint_focus = false;
+    canvas->tap_hint_full = false;
+    canvas->tap_run_active = false;
+
     // Initialize callback array
     CanvasCallbackPairArray_init(canvas->canvas_callback_pair);
 
@@ -58,6 +67,124 @@ static void canvas_lock(Canvas* canvas) {
 static void canvas_unlock(Canvas* canvas) {
     furi_assert(canvas);
     furi_check(furi_mutex_release(canvas->mutex) == FuriStatusOk);
+}
+
+static bool canvas_tap_logical_inverted(const Canvas* canvas) {
+    uint8_t color = canvas->fb.draw_color;
+    if(color != ColorWhite && color != ColorBlack) return false; // XOR
+    bool raw_white = (color == ColorWhite);
+    return raw_white != momentum_settings.dark_mode;
+}
+
+static void canvas_tap_fill(Canvas* canvas, CanvasTapRecord* record, int32_t x, int32_t y) {
+    memset(record, 0, sizeof(*record));
+    record->x = (int16_t)x;
+    record->y = (int16_t)y;
+    record->layer = canvas->tap_layer;
+    record->font = canvas->tap_font;
+    record->inverted = canvas_tap_logical_inverted(canvas);
+    if(canvas->tap_hint_focus) {
+        record->focus = true;
+        record->index = canvas->tap_hint_index;
+        record->count = canvas->tap_hint_count;
+        canvas->tap_hint_focus = false;
+    }
+}
+
+static bool canvas_tap_is_prefix_fragment(const char* drawn, const char* full) {
+    size_t len = strlen(drawn);
+    if(len >= 3 && strcmp(drawn + len - 3, "...") == 0) len -= 3;
+    return strncmp(drawn, full, len) == 0;
+}
+
+void canvas_tap_flush(Canvas* canvas) {
+    furi_assert(canvas);
+    if(!canvas->tap_run_active) return;
+    canvas->tap_run_active = false;
+    if(canvas->tap_callback) canvas->tap_callback(&canvas->tap_run, canvas->tap_context);
+}
+
+static void canvas_tap_text(Canvas* canvas, int32_t x, int32_t y, const char* str) {
+    if(!canvas->tap_callback) {
+        canvas->tap_hint_focus = false;
+        canvas->tap_hint_full = false;
+        return;
+    }
+    canvas_tap_flush(canvas);
+    CanvasTapRecord record;
+    canvas_tap_fill(canvas, &record, x, y);
+    const char* text = str;
+    if(canvas->tap_hint_full) {
+        if(!canvas->tap_hint_verify || canvas_tap_is_prefix_fragment(str, canvas->tap_hint_text)) {
+            text = canvas->tap_hint_text;
+        }
+        canvas->tap_hint_full = false;
+    }
+    strlcpy(record.text, text, sizeof(record.text));
+    canvas->tap_callback(&record, canvas->tap_context);
+}
+
+static void canvas_tap_glyph(Canvas* canvas, int32_t x, int32_t y, uint16_t ch) {
+    if(!canvas->tap_callback) {
+        canvas->tap_hint_focus = false;
+        canvas->tap_hint_full = false;
+        return;
+    }
+    canvas->tap_hint_full = false;
+    if(ch < 0x20 || ch > 0x7E) ch = '?';
+    bool inverted = canvas_tap_logical_inverted(canvas);
+    bool continues = canvas->tap_run_active && !canvas->tap_hint_focus &&
+                     canvas->tap_run.y == y && canvas->tap_run.layer == canvas->tap_layer &&
+                     canvas->tap_run.font == canvas->tap_font &&
+                     canvas->tap_run.inverted == inverted && x >= canvas->tap_run_next_x &&
+                     strlen(canvas->tap_run.text) < CANVAS_TAP_TEXT_MAX - 1;
+    if(!continues) {
+        canvas_tap_flush(canvas);
+        canvas_tap_fill(canvas, &canvas->tap_run, x, y);
+        canvas->tap_run_active = true;
+    }
+    size_t len = strlen(canvas->tap_run.text);
+    canvas->tap_run.text[len] = (char)ch;
+    canvas->tap_run.text[len + 1] = '\0';
+    canvas->tap_run_next_x = (int16_t)(x + 1);
+}
+
+void canvas_tap_set_callback(Canvas* canvas, CanvasTapCallback callback, void* context) {
+    furi_check(canvas);
+    canvas->tap_run_active = false;
+    canvas->tap_hint_focus = false;
+    canvas->tap_hint_full = false;
+    canvas->tap_callback = callback;
+    canvas->tap_context = context;
+}
+
+void canvas_tap_set_layer(Canvas* canvas, uint8_t layer) {
+    furi_assert(canvas);
+    canvas_tap_flush(canvas);
+    canvas->tap_layer = layer;
+}
+
+void canvas_tap_hint_focus(Canvas* canvas, uint16_t index, uint16_t count) {
+    furi_assert(canvas);
+    canvas->tap_hint_focus = true;
+    canvas->tap_hint_index = index;
+    canvas->tap_hint_count = count;
+}
+
+void canvas_tap_hint_full_text(Canvas* canvas, const char* full_text, bool verify_prefix) {
+    furi_assert(canvas);
+    if(!canvas->tap_callback || !full_text) return;
+    strlcpy(canvas->tap_hint_text, full_text, sizeof(canvas->tap_hint_text));
+    canvas->tap_hint_full = true;
+    canvas->tap_hint_verify = verify_prefix;
+}
+
+void canvas_tap_note(Canvas* canvas, int32_t x, int32_t y, const char* text) {
+    furi_assert(canvas);
+    if(!text) return;
+    x += canvas->offset_x;
+    y += canvas->offset_y;
+    canvas_tap_text(canvas, x, y, text);
 }
 
 void canvas_reset(Canvas* canvas) {
@@ -184,6 +311,7 @@ void canvas_invert_color(Canvas* canvas) {
 
 void canvas_set_font(Canvas* canvas, Font font) {
     furi_check(canvas);
+    canvas->tap_font = font;
     u8g2_SetFontMode(&canvas->fb, 1);
     if(asset_packs && asset_packs->fonts[font]) {
         u8g2_SetFont(&canvas->fb, asset_packs->fonts[font]);
@@ -213,6 +341,7 @@ void canvas_set_font(Canvas* canvas, Font font) {
 
 void canvas_set_custom_u8g2_font(Canvas* canvas, const uint8_t* font) {
     furi_check(canvas);
+    canvas->tap_font = CANVAS_TAP_FONT_CUSTOM;
     u8g2_SetFontMode(&canvas->fb, 1);
     u8g2_SetFont(&canvas->fb, font);
 }
@@ -222,6 +351,7 @@ void canvas_draw_str(Canvas* canvas, int32_t x, int32_t y, const char* str) {
     if(!str) return;
     x += canvas->offset_x;
     y += canvas->offset_y;
+    canvas_tap_text(canvas, x, y, str);
     u8g2_DrawUTF8(&canvas->fb, x, y, str);
 }
 
@@ -265,6 +395,7 @@ void canvas_draw_str_aligned(
         break;
     }
 
+    canvas_tap_text(canvas, x, y, str);
     u8g2_DrawUTF8(&canvas->fb, x, y, str);
 }
 
@@ -620,6 +751,7 @@ void canvas_draw_glyph(Canvas* canvas, int32_t x, int32_t y, uint16_t ch) {
     furi_check(canvas);
     x += canvas->offset_x;
     y += canvas->offset_y;
+    canvas_tap_glyph(canvas, x, y, ch);
     u8g2_DrawGlyph(&canvas->fb, x, y, ch);
 }
 

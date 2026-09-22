@@ -72,6 +72,7 @@ static bool gui_redraw_fs(Gui* gui) {
     canvas_frame_set(gui->canvas, 0, 0, GUI_DISPLAY_WIDTH, GUI_DISPLAY_HEIGHT);
     ViewPort* view_port = gui_view_port_find_enabled(gui->layers[GuiLayerFullscreen]);
     if(view_port) {
+        canvas_tap_set_layer(gui->canvas, GuiLayerFullscreen);
         view_port_draw(view_port, gui->canvas);
         return true;
     } else {
@@ -144,6 +145,7 @@ static void gui_redraw_status_bar(Gui* gui, bool need_attention) {
                 GUI_STATUS_BAR_Y + 2,
                 width,
                 GUI_STATUS_BAR_WORKAREA_HEIGHT);
+            canvas_tap_set_layer(gui->canvas, GuiLayerStatusBarRight);
             view_port_draw(view_port, gui->canvas);
         }
         ViewPortArray_next(it);
@@ -201,6 +203,7 @@ static void gui_redraw_status_bar(Gui* gui, bool need_attention) {
                 // ViewPort draw
                 canvas_frame_set(
                     gui->canvas, x, GUI_STATUS_BAR_Y + 2, width, GUI_STATUS_BAR_WORKAREA_HEIGHT);
+                canvas_tap_set_layer(gui->canvas, GuiLayerStatusBarLeft);
                 view_port_draw(view_port, gui->canvas);
                 // Recalculate next position
                 left_used += (width + 2);
@@ -260,6 +263,7 @@ static bool gui_redraw_window(Gui* gui) {
     canvas_frame_set(gui->canvas, GUI_WINDOW_X, GUI_WINDOW_Y, GUI_WINDOW_WIDTH, GUI_WINDOW_HEIGHT);
     ViewPort* view_port = gui_view_port_find_enabled(gui->layers[GuiLayerWindow]);
     if(view_port) {
+        canvas_tap_set_layer(gui->canvas, GuiLayerWindow);
         view_port_draw(view_port, gui->canvas);
         return true;
     }
@@ -271,6 +275,7 @@ static bool gui_redraw_desktop(Gui* gui) {
     canvas_frame_set(gui->canvas, 0, 0, GUI_DISPLAY_WIDTH, GUI_DISPLAY_HEIGHT);
     ViewPort* view_port = gui_view_port_find_enabled(gui->layers[GuiLayerDesktop]);
     if(view_port) {
+        canvas_tap_set_layer(gui->canvas, GuiLayerDesktop);
         view_port_draw(view_port, gui->canvas);
         return true;
     }
@@ -286,9 +291,12 @@ static void gui_redraw(Gui* gui) {
         if(gui->direct_draw) break;
 
         canvas_reset(gui->canvas);
+        canvas_tap_set_layer(gui->canvas, CANVAS_TAP_LAYER_UNKNOWN);
+        if(gui->tap) gui->tap->frame_begin(gui->tap_context);
+        uint8_t content_layer = CANVAS_TAP_LAYER_UNKNOWN;
 
         if(gui_is_lockdown(gui)) {
-            gui_redraw_desktop(gui);
+            if(gui_redraw_desktop(gui)) content_layer = GuiLayerDesktop;
             bool need_attention =
                 (gui_view_port_find_enabled(gui->layers[GuiLayerWindow]) != 0 ||
                  gui_view_port_find_enabled(gui->layers[GuiLayerFullscreen]) != 0);
@@ -296,17 +304,32 @@ static void gui_redraw(Gui* gui) {
                 gui_redraw_status_bar(gui, need_attention);
             }
         } else {
-            if(!gui_redraw_fs(gui)) {
-                if(!gui_redraw_window(gui)) {
-                    gui_redraw_desktop(gui);
+            if(gui_redraw_fs(gui)) {
+                content_layer = GuiLayerFullscreen;
+            } else {
+                if(gui_redraw_window(gui)) {
+                    content_layer = GuiLayerWindow;
+                } else if(gui_redraw_desktop(gui)) {
+                    content_layer = GuiLayerDesktop;
                 }
                 gui_redraw_status_bar(gui, false);
             }
         }
 
+        canvas_tap_flush(gui->canvas);
         canvas_commit(gui->canvas);
+        if(gui->tap) gui->tap->frame_end(gui->tap_context, content_layer);
     } while(false);
 
+    gui_unlock(gui);
+}
+
+void gui_tap_set(Gui* gui, const GuiTap* tap, void* context) {
+    furi_check(gui);
+    gui_lock(gui);
+    gui->tap = tap;
+    gui->tap_context = context;
+    canvas_tap_set_callback(gui->canvas, tap ? tap->text : NULL, context);
     gui_unlock(gui);
 }
 
@@ -638,6 +661,8 @@ Gui* gui_alloc(void) {
 
     // Drawing canvas
     gui->canvas = canvas_init();
+    gui->tap = NULL;
+    gui->tap_context = NULL;
 
     // Input
     gui->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
