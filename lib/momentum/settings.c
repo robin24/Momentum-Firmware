@@ -47,6 +47,10 @@ MomentumSettings momentum_settings = {
     .spoof_color = FuriHalVersionColorUnknown, // Real
     .rpc_color_fg = {{ScreenColorModeDefault, {.value = 0x000000}}}, // Default Black
     .rpc_color_bg = {{ScreenColorModeDefault, {.value = 0xFF8200}}}, // Default Orange
+    .screen_reader = false, // OFF
+    .sr_rate = 72, // SAM speed, bigger is slower
+    .sr_volume = 100, // %
+    .sr_verbosity = 1, // Normal
 };
 
 typedef enum {
@@ -121,6 +125,10 @@ static const struct {
     {setting_enum(spoof_color, FuriHalVersionColorCount)},
     {setting_uint(rpc_color_fg, 0x000000, 0xFFFFFF)},
     {setting_uint(rpc_color_bg, 0x000000, 0xFFFFFF)},
+    {setting_bool(screen_reader)},
+    {setting_uint(sr_rate, 40, 120)},
+    {setting_uint(sr_volume, 0, 100)},
+    {setting_uint(sr_verbosity, 0, 2)},
 };
 
 void momentum_settings_load(void) {

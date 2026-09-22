@@ -104,6 +104,10 @@ typedef struct {
     FuriHalVersionColor spoof_color;
     ScreenFrameColor rpc_color_fg;
     ScreenFrameColor rpc_color_bg;
+    bool screen_reader;
+    uint32_t sr_rate;
+    uint32_t sr_volume;
+    uint32_t sr_verbosity;
 } MomentumSettings;
 
 void momentum_settings_save(void);
