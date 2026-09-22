@@ -133,15 +133,70 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
 }
 
 size_t sr_screen_focus_text(const SrScreen* screen, char* out, size_t out_size) {
-    (void)screen;
-    if(out_size) out[0] = '\0';
-    return 0;
+    if(out_size == 0) return 0;
+    out[0] = '\0';
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        const SrRow* row = &screen->rows[i];
+        if(row->kind != SrRowFocus) continue;
+        if(out[0] != '\0') sr_append(out, out_size, ", ");
+        sr_append(out, out_size, row->text);
+    }
+    return strlen(out);
+}
+
+static void sr_append_position(char* out, size_t out_size, const SrRow* row) {
+    if(!row->count) return;
+    char pos[32];
+    snprintf(pos, sizeof(pos), ", %u of %u", (unsigned)row->index, (unsigned)row->count);
+    sr_append(out, out_size, pos);
+}
+
+static const char* sr_button_side(const SrRow* row) {
+    if(row->x < 40) return "left";
+    if(row->x > 88) return "right";
+    return "center";
+}
+
+static void sr_append_buttons(const SrScreen* screen, char* out, size_t out_size) {
+    bool first = true;
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        const SrRow* row = &screen->rows[i];
+        if(row->kind != SrRowButton) continue;
+        if(first) {
+            if(out[0] != '\0') sr_append(out, out_size, ". ");
+            sr_append(out, out_size, "buttons: ");
+            first = false;
+        } else {
+            sr_append(out, out_size, ", ");
+        }
+        sr_append(out, out_size, sr_button_side(row));
+        sr_append(out, out_size, " ");
+        sr_append(out, out_size, row->text);
+    }
 }
 
 size_t sr_screen_describe(const SrScreen* screen, char* out, size_t out_size) {
-    (void)screen;
-    if(out_size) out[0] = '\0';
-    return 0;
+    if(out_size == 0) return 0;
+    out[0] = '\0';
+    if(screen->title_row >= 0) {
+        sr_append(out, out_size, screen->rows[screen->title_row].text);
+    }
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        const SrRow* row = &screen->rows[i];
+        if(row->kind != SrRowNormal || (int8_t)i == screen->title_row) continue;
+        if(out[0] != '\0') sr_append(out, out_size, ". ");
+        sr_append(out, out_size, row->text);
+    }
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        const SrRow* row = &screen->rows[i];
+        if(row->kind != SrRowFocus) continue;
+        if(out[0] != '\0') sr_append(out, out_size, ". ");
+        sr_append(out, out_size, row->text);
+        sr_append_position(out, out_size, row);
+    }
+    sr_append_buttons(screen, out, out_size);
+    if(screen->overflow) sr_append(out, out_size, ", and more");
+    return strlen(out);
 }
 
 void sr_model_init(SrModel* model, uint8_t verbosity) {
