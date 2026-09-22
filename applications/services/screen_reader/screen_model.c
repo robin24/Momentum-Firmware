@@ -204,6 +204,106 @@ void sr_model_init(SrModel* model, uint8_t verbosity) {
     model->verbosity = verbosity;
 }
 
+static void sr_emit(
+    SrAnnouncement* out,
+    size_t out_max,
+    size_t* n,
+    SrAnnKind kind,
+    bool interrupt,
+    const char* text) {
+    if(*n >= out_max) return;
+    SrAnnouncement* a = &out[*n];
+    a->kind = kind;
+    a->interrupt = interrupt;
+    sr_copy(a->text, sizeof(a->text), text);
+    (*n)++;
+}
+
+static bool sr_screen_has_text(const SrScreen* screen, const char* text) {
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        if(screen->rows[i].kind == SrRowStatus) continue;
+        if(strcmp(screen->rows[i].text, text) == 0) return true;
+    }
+    return false;
+}
+
+static const char* sr_title_text(const SrScreen* screen) {
+    return screen->title_row >= 0 ? screen->rows[screen->title_row].text : "";
+}
+
+static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
+    if(prev->content_layer != cur->content_layer) return true;
+    if(prev->has_content != cur->has_content) return true;
+    if(strcmp(sr_title_text(prev), sr_title_text(cur)) != 0) return true;
+    // Fewer than half of the previous rows still present, ignoring their roles: a list
+    // that scrolled by one keeps most rows, a new screen keeps almost none.
+    unsigned total = 0, kept = 0;
+    for(uint8_t i = 0; i < prev->row_count; i++) {
+        const SrRow* row = &prev->rows[i];
+        if(row->kind == SrRowStatus) continue;
+        total++;
+        if(sr_screen_has_text(cur, row->text)) kept++;
+    }
+    return total > 0 && kept * 2 < total;
+}
+
+static void sr_screen_announcement(const SrModel* model, const SrScreen* s, char* out, size_t out_size) {
+    out[0] = '\0';
+    char focus[SR_ANN_TEXT_MAX];
+    sr_screen_focus_text(s, focus, sizeof(focus));
+    if(s->title_row >= 0) sr_append(out, out_size, sr_title_text(s));
+    if(focus[0] != '\0') {
+        if(out[0] != '\0') sr_append(out, out_size, ". ");
+        sr_append(out, out_size, focus);
+        if(model->verbosity >= 2) {
+            for(uint8_t i = 0; i < s->row_count; i++) {
+                if(s->rows[i].kind == SrRowFocus && s->rows[i].count) {
+                    sr_append_position(out, out_size, &s->rows[i]);
+                    break;
+                }
+            }
+        }
+    } else {
+        for(uint8_t i = 0; i < s->row_count; i++) {
+            const SrRow* row = &s->rows[i];
+            if(row->kind != SrRowNormal || (int8_t)i == s->title_row) continue;
+            if(out[0] != '\0') sr_append(out, out_size, ". ");
+            sr_append(out, out_size, row->text);
+        }
+    }
+    if(model->verbosity >= 1) sr_append_buttons(s, out, out_size);
+    if(s->overflow) sr_append(out, out_size, ", and more");
+}
+
+static bool sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* out, size_t out_size) {
+    if(!cur->has_keyboard || !prev->has_keyboard) return false;
+    for(uint8_t i = 0; i < cur->row_count; i++) {
+        const SrRow* now = &cur->rows[i];
+        if(now->kind != SrRowNormal) continue;
+        for(uint8_t j = 0; j < prev->row_count; j++) {
+            const SrRow* was = &prev->rows[j];
+            if(was->kind != SrRowNormal) continue;
+            if((now->y - was->y) > SR_ROW_Y_TOLERANCE || (was->y - now->y) > SR_ROW_Y_TOLERANCE) continue;
+            size_t ln = strlen(now->text), lw = strlen(was->text);
+            if(ln == lw + 1 && strncmp(now->text, was->text, lw) == 0) {
+                char c = now->text[lw];
+                if(c == ' ') {
+                    sr_copy(out, out_size, "space");
+                } else {
+                    out[0] = c;
+                    out[1] = '\0';
+                }
+                return true;
+            }
+            if(lw == ln + 1 && strncmp(now->text, was->text, ln) == 0) {
+                sr_copy(out, out_size, "deleted");
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 size_t sr_model_process(
     SrModel* model,
     const SrFrame* frame,
@@ -211,11 +311,62 @@ size_t sr_model_process(
     bool key_recent,
     SrAnnouncement* out,
     size_t out_max) {
-    (void)model;
-    (void)frame;
-    (void)now_ms;
-    (void)key_recent;
-    (void)out;
-    (void)out_max;
-    return 0;
+    size_t n = 0;
+    SrScreen* cur = &model->current;
+    sr_screen_build(frame, cur);
+
+    char text[SR_ANN_TEXT_MAX];
+    bool first = !model->have_prev;
+    bool changed = first || sr_screen_changed(&model->prev, cur);
+
+    if(changed) {
+        if(cur->has_content) {
+            sr_screen_announcement(model, cur, text, sizeof(text));
+            sr_emit(out, out_max, &n, SrAnnScreen, true, text);
+        } else if(cur->content_layer == SrLayerDesktop) {
+            sr_emit(out, out_max, &n, SrAnnHome, true, "Home screen");
+        }
+    } else {
+        char focus_now[SR_ANN_TEXT_MAX];
+        char focus_was[SR_ANN_TEXT_MAX];
+        sr_screen_focus_text(cur, focus_now, sizeof(focus_now));
+        sr_screen_focus_text(&model->prev, focus_was, sizeof(focus_was));
+        if(focus_now[0] != '\0' && strcmp(focus_now, focus_was) != 0) {
+            sr_copy(text, sizeof(text), focus_now);
+            if(model->verbosity >= 2) {
+                for(uint8_t i = 0; i < cur->row_count; i++) {
+                    if(cur->rows[i].kind == SrRowFocus && cur->rows[i].count) {
+                        sr_append_position(text, sizeof(text), &cur->rows[i]);
+                        break;
+                    }
+                }
+            }
+            sr_emit(out, out_max, &n, SrAnnFocus, true, text);
+        } else if(sr_typed_character(&model->prev, cur, text, sizeof(text))) {
+            sr_emit(out, out_max, &n, SrAnnTyped, true, text);
+        } else {
+            text[0] = '\0';
+            for(uint8_t i = 0; i < cur->row_count; i++) {
+                const SrRow* row = &cur->rows[i];
+                if(row->kind != SrRowNormal) continue;
+                if(sr_screen_has_text(&model->prev, row->text)) continue;
+                if(text[0] != '\0') sr_append(text, sizeof(text), ". ");
+                sr_append(text, sizeof(text), row->text);
+            }
+            if(text[0] != '\0') {
+                bool allowed = key_recent || (now_ms - model->last_spontaneous_ms) >= SR_SPONTANEOUS_MS;
+                if(allowed) {
+                    if(!key_recent) {
+                        model->last_spontaneous_ms = now_ms;
+                        if(strlen(text) > SR_SPONTANEOUS_MAX) text[SR_SPONTANEOUS_MAX] = '\0';
+                    }
+                    sr_emit(out, out_max, &n, SrAnnChange, false, text);
+                }
+            }
+        }
+    }
+
+    memcpy(&model->prev, cur, sizeof(SrScreen));
+    model->have_prev = true;
+    return n;
 }
