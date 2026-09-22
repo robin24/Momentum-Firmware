@@ -43,8 +43,7 @@ static const char* sr_font_name(uint8_t font) {
     }
 }
 
-// Unused until Task 7's "sr watch" command reports announcement kinds.
-__attribute__((unused)) static const char* sr_kind_name(SrAnnKind kind) {
+static const char* sr_kind_name(SrAnnKind kind) {
     switch(kind) {
     case SrAnnFocus:
         return "focus";
@@ -153,9 +152,73 @@ void screen_reader_cli_register(ScreenReader* sr) {
     furi_record_close(RECORD_CLI);
 }
 
-// Task 7 fills this in. Until then, watch just explains itself.
+static void sr_cli_press(FuriPubSub* input, InputKey key) {
+    InputEvent event;
+    memset(&event, 0, sizeof(event));
+    event.key = key;
+    event.type = InputTypePress;
+    furi_pubsub_publish(input, &event);
+    event.type = InputTypeShort;
+    furi_pubsub_publish(input, &event);
+    event.type = InputTypeRelease;
+    furi_pubsub_publish(input, &event);
+}
+
+static void sr_cli_print_screen(ScreenReader* sr) {
+    SrScreen* screen = malloc(sizeof(SrScreen));
+    screen_reader_get_screen(sr, screen);
+    char* text = malloc(SR_ANN_TEXT_MAX);
+    sr_screen_describe(screen, text, SR_ANN_TEXT_MAX);
+    printf("screen: %s\r\n", text);
+    free(text);
+    free(screen);
+}
+
 static void sr_cli_watch(PipeSide* pipe, ScreenReader* sr) {
-    UNUSED(pipe);
-    UNUSED(sr);
-    printf("watch is not implemented yet\r\n");
+    FuriMessageQueue* queue = furi_message_queue_alloc(8, sizeof(SrAnnouncement));
+    SrAnnouncement* announcement = malloc(sizeof(SrAnnouncement));
+    FuriPubSub* input = furi_record_open(RECORD_INPUT_EVENTS);
+    FuriPubSub* ascii = furi_record_open(RECORD_ASCII_EVENTS);
+
+    printf("Watching. Arrows move, Enter is OK, Backspace is Back, Tab reads the screen,\r\n");
+    printf("letters type into text fields. Ctrl+C stops.\r\n");
+    screen_reader_set_watch_queue(sr, queue);
+    sr_cli_print_screen(sr);
+
+    bool run = true;
+    while(run && pipe_state(pipe) == PipeStateOpen) {
+        if(furi_message_queue_get(queue, announcement, 20) == FuriStatusOk) {
+            printf("%s: %s\r\n", sr_kind_name(announcement->kind), announcement->text);
+        }
+        while(run && pipe_bytes_available(pipe)) {
+            char c = getchar();
+            if(c == CliKeyETX) {
+                run = false;
+            } else if(c == CliKeyEsc) {
+                char c2 = 0, c3 = 0;
+                if(pipe_receive(pipe, &c2, 1) && c2 == '[' && pipe_receive(pipe, &c3, 1)) {
+                    if(c3 == 'A') sr_cli_press(input, InputKeyUp);
+                    if(c3 == 'B') sr_cli_press(input, InputKeyDown);
+                    if(c3 == 'C') sr_cli_press(input, InputKeyRight);
+                    if(c3 == 'D') sr_cli_press(input, InputKeyLeft);
+                }
+            } else if(c == CliKeyCR || c == CliKeyLF) {
+                sr_cli_press(input, InputKeyOk);
+            } else if(c == CliKeyBackspace || c == CliKeyDEL) {
+                sr_cli_press(input, InputKeyBack);
+            } else if(c == CliKeyTab) {
+                sr_cli_print_screen(sr);
+            } else if(c >= 0x20 && c < 0x7F) {
+                AsciiEvent event = {.value = (uint8_t)c};
+                furi_pubsub_publish(ascii, &event);
+            }
+        }
+    }
+
+    screen_reader_set_watch_queue(sr, NULL);
+    furi_record_close(RECORD_ASCII_EVENTS);
+    furi_record_close(RECORD_INPUT_EVENTS);
+    furi_message_queue_free(queue);
+    free(announcement);
+    printf("stopped\r\n");
 }
