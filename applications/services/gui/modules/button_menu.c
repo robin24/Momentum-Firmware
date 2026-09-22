@@ -1,6 +1,7 @@
 #include "button_menu.h"
 
 #include <gui/canvas.h>
+#include <gui/canvas_i.h>
 #include <gui/elements.h>
 #include <input/input.h>
 
@@ -50,6 +51,7 @@ static void button_menu_draw_text(
     FuriString* disp_str;
     disp_str = furi_string_alloc_set(text);
     bool draw_static = true;
+    if(selected) canvas_tap_hint_focus(canvas, 0, 0);
 
     if(selected) {
         size_t text_width = canvas_string_width(canvas, furi_string_get_cstr(disp_str));

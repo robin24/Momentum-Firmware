@@ -3,6 +3,7 @@
 #include "file_browser_worker_i.h"
 
 #include <gui/elements.h>
+#include <gui/canvas_i.h>
 #include <assets_icons.h>
 #include <toolbox/path.h>
 
@@ -615,6 +616,9 @@ static void browser_draw_list(Canvas* canvas, FileBrowserModel* model) {
         } else if(BrowserItemIcons[item_type] != NULL) {
             canvas_draw_icon(
                 canvas, 2, Y_OFFSET + 1 + i * FRAME_HEIGHT, BrowserItemIcons[item_type]);
+        }
+        if(!model->list_loading && model->item_idx == idx) {
+            canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
         }
         elements_scrollable_text_line(
             canvas,

@@ -1,6 +1,7 @@
 #include "variable_item_list.h"
 #include <gui/elements.h>
 #include <gui/canvas.h>
+#include <gui/canvas_i.h>
 #include <furi.h>
 #include <assets_icons.h>
 #include <m-array.h>
@@ -109,6 +110,11 @@ static void variable_item_list_draw_callback(Canvas* canvas, void* _model) {
                 label_width = 71;
             }
 
+            if(position == model->position) {
+                canvas_tap_hint_focus(
+                    canvas, position + 1, VariableItemArray_size(model->items));
+            }
+
             elements_scrollable_text_line(
                 canvas,
                 6,
@@ -123,6 +129,11 @@ static void variable_item_list_draw_callback(Canvas* canvas, void* _model) {
             } else {
                 if(item->current_value_index > 0) {
                     canvas_draw_str(canvas, value_pos_x, item_text_y, "<");
+                }
+
+                if(position == model->position) {
+                    canvas_tap_hint_focus(
+                        canvas, position + 1, VariableItemArray_size(model->items));
                 }
 
                 elements_scrollable_text_line_centered(

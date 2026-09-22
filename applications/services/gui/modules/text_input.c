@@ -1,5 +1,6 @@
 #include "text_input.h"
 #include <gui/elements.h>
+#include <gui/canvas_i.h>
 #include <assets_icons.h>
 #include <furi.h>
 
@@ -353,6 +354,17 @@ static void text_input_view_draw_callback(Canvas* canvas, void* _model) {
             }
             canvas_set_color(canvas, ColorBlack);
             if(icon != NULL) {
+                if(selected) {
+                    const char* name = "Save";
+                    if(keys[column].text == SWITCH_KEYBOARD_KEY) name = "Switch keyboard";
+                    if(keys[column].text == BACKSPACE_KEY) name = "Backspace";
+                    canvas_tap_hint_focus(canvas, 0, 0);
+                    canvas_tap_note(
+                        canvas,
+                        keyboard_origin_x + keys[column].x,
+                        keyboard_origin_y + keys[column].y,
+                        name);
+                }
                 canvas_draw_icon(
                     canvas,
                     keyboard_origin_x + keys[column].x,
@@ -367,6 +379,7 @@ static void text_input_view_draw_callback(Canvas* canvas, void* _model) {
                         9,
                         11);
                     canvas_set_color(canvas, ColorWhite);
+                    canvas_tap_hint_focus(canvas, 0, 0);
                 }
 
                 char glyph = keys[column].text;

@@ -5,6 +5,7 @@
 #include <furi_hal.h>
 
 #include <gui/canvas.h>
+#include <gui/canvas_i.h>
 #include <gui/icon_i.h>
 #include <gui/icon_animation_i.h>
 
@@ -665,6 +666,7 @@ void elements_string_fit_width(Canvas* canvas, FuriString* string, size_t width)
 
     size_t len_px = canvas_string_width(canvas, furi_string_get_cstr(string));
     if(len_px > width) {
+        canvas_tap_hint_full_text(canvas, furi_string_get_cstr(string), true);
         width -= canvas_string_width(canvas, "...");
         do {
             furi_string_left(string, furi_string_size(string) - 1);
@@ -758,6 +760,7 @@ void elements_scrollable_text_line_centered(
         }
     }
 
+    canvas_tap_hint_full_text(canvas, furi_string_get_cstr(string), false);
     if(centered) {
         canvas_draw_str_aligned(
             canvas, x, y, AlignCenter, AlignBottom, furi_string_get_cstr(line));

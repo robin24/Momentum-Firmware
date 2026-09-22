@@ -2,6 +2,7 @@
 
 #include <assets_icons.h>
 #include <gui/elements.h>
+#include <gui/canvas_i.h>
 #include <furi.h>
 #include <m-array.h>
 
@@ -128,6 +129,11 @@ static void submenu_view_draw_callback(Canvas* canvas, void* _model) {
                     item_width - 10,
                     y_offset + (item_position * item_height) + item_height - 12,
                     &I_Lock_7x8);
+            }
+
+            if(position == model->position) {
+                canvas_tap_hint_focus(
+                    canvas, position + 1, SubmenuItemArray_size(model->items));
             }
 
             FuriString* disp_str = furi_string_alloc_set(SubmenuItemArray_cref(it)->label);

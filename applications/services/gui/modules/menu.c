@@ -129,6 +129,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                 menu_centered_icon(canvas, item, 4, 3 + 22 * i, 14, 14);
                 menu_get_name(item, name, false);
                 size_t scroll_counter = menu_scroll_counter(model, i == 1);
+                if(i == 1) canvas_tap_hint_focus(canvas, position + 1, items_count);
                 elements_scrollable_text_line(
                     canvas, 22, 14 + 22 * i, 98, name, scroll_counter, false);
             }
