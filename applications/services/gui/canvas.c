@@ -161,6 +161,8 @@ void canvas_tap_set_callback(Canvas* canvas, CanvasTapCallback callback, void* c
 void canvas_tap_set_layer(Canvas* canvas, uint8_t layer) {
     furi_assert(canvas);
     canvas_tap_flush(canvas);
+    canvas->tap_hint_focus = false;
+    canvas->tap_hint_full = false;
     canvas->tap_layer = layer;
 }
 

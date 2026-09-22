@@ -624,6 +624,8 @@ Canvas* gui_direct_draw_acquire(Gui* gui) {
 
     gui_lock(gui);
     gui->direct_draw = true;
+    canvas_tap_flush(gui->canvas);
+    canvas_tap_set_callback(gui->canvas, NULL, NULL);
     gui_unlock(gui);
 
     canvas_set_orientation(gui->canvas, CanvasOrientationHorizontal);
@@ -638,9 +640,10 @@ void gui_direct_draw_release(Gui* gui) {
     furi_check(gui);
 
     canvas_reset(gui->canvas);
-    canvas_commit(gui->canvas);
 
     gui_lock(gui);
+    canvas_tap_set_callback(gui->canvas, gui->tap ? gui->tap->text : NULL, gui->tap_context);
+    canvas_commit(gui->canvas);
     gui->direct_draw = false;
     gui_unlock(gui);
 
