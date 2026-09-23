@@ -16,6 +16,7 @@
 #define SPEECH_IDLE_RELEASE_MS    200
 #define SPEECH_ACQUIRE_TIMEOUT_MS 500
 #define SPEECH_EVENT_TIMEOUT_MS   200
+#define SPEECH_BUS_POLL_MS        5
 
 #define SPEECH_FLAG_WORK  (1 << 0)
 #define SPEECH_FLAG_STOP  (1 << 1)
@@ -158,9 +159,25 @@ static void speech_flush(Speech* speech) {
 
 static bool speech_take_speaker(Speech* speech) {
     if(furi_hal_speaker_is_mine()) return true;
-    // Someone else drives TIM16 (another speaker user, or NFC tag emulation): do not touch it
-    if(furi_hal_bus_is_enabled(FuriHalBusTIM16)) return false;
-    if(!furi_hal_speaker_acquire(SPEECH_ACQUIRE_TIMEOUT_MS)) return false;
+    // Someone else drives TIM16: the notification service holds the speaker for a whole beep
+    // sequence (four 50 ms notes on a successful read, fired back to back with the result
+    // screen), the NFC-V listener for a whole emulation. Wait for the bus to go quiet instead
+    // of dropping the announcement, then take the mutex with what is left of the timeout; an
+    // emulation outlasts it and the utterance is dropped as before. A stop request or a newer
+    // utterance ends the wait at once
+    uint32_t started = furi_get_tick();
+    while(furi_hal_bus_is_enabled(FuriHalBusTIM16)) {
+        if(speech_superseded(speech)) {
+            speech->aborted = true;
+            return false;
+        }
+        if(furi_get_tick() - started >= SPEECH_ACQUIRE_TIMEOUT_MS) return false;
+        furi_delay_ms(SPEECH_BUS_POLL_MS);
+    }
+    uint32_t waited = furi_get_tick() - started;
+    uint32_t remaining = waited < SPEECH_ACQUIRE_TIMEOUT_MS ? SPEECH_ACQUIRE_TIMEOUT_MS - waited :
+                                                              0;
+    if(!furi_hal_speaker_acquire(remaining)) return false;
     speech_lock(speech);
     speech->stats.speaker_held = true;
     speech_unlock(speech);
@@ -194,7 +211,11 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
 
     if(!speech_take_speaker(speech)) {
         speech_lock(speech);
-        speech->stats.dropped++;
+        if(speech->aborted) {
+            speech->stats.aborted++; // a stop request or a newer utterance ended the wait
+        } else {
+            speech->stats.dropped++; // the timer stayed busy, as during an NFC-V emulation
+        }
         speech->stats.speaking = false;
         speech_unlock(speech);
         return;
