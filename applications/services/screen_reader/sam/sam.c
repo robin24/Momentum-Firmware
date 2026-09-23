@@ -17,6 +17,9 @@ static unsigned char singmode;
 static SamOutputCallback sam_callback;
 static void* sam_context;
 static bool sam_aborted;
+// port addition: input position of the word boundary where the phoneme string filled up, 0 when
+// the whole text fitted
+static unsigned char reciter_stop;
 
 // Former private methods of the original synthesizer class, defined further down
 static void Output8BitAry(int index, unsigned char ary[5]);
@@ -3844,6 +3847,11 @@ static int Parser1(void) {
     // THIS CODE MATCHES THE PHONEME LETTERS TO THE TABLE
     // pos41078:
     while(1) {
+        // port guard: a full list still ends with the terminator, and slot 255 is never written
+        if(position >= 254) {
+            phonemeindex[254] = 255;
+            return 1;
+        }
         // GET THE FIRST CHARACTER FROM THE PHONEME BUFFER
         sign1 = input[X];
         // TEST FOR 155 (�) END OF LINE MARKER
@@ -3965,6 +3973,7 @@ static void Code41240(void) {
     unsigned char pos = 0;
 
     while(phonemeindex[pos] != 255) {
+        if(pos >= 253) return; // port guard: the two Inserts need pos + 2 below 255
         unsigned char index; //register AC
         X = pos;
         index = phonemeindex[pos];
@@ -4797,6 +4806,7 @@ static int TextToPhonemes(unsigned char* input) // Code36484
     unsigned char mem66; // position of '('
     unsigned char mem36653;
 
+    reciter_stop = 0; // port addition
     inputtemp[0] = 32;
 
     // secure copy of input
@@ -4878,6 +4888,7 @@ pos36554:
     //36653 is unknown. Contains position
 
 pos36654:
+    reciter_stop = mem61; // port addition: the rest of the text starts at input[mem61]
     input[X] = 155;
     A = mem61;
     mem36653 = A;
@@ -5274,7 +5285,13 @@ char to_upper_case(char c) {
     return c;
 }
 
-bool sam_speak(const char* text, const SamVoice* voice, SamOutputCallback callback, void* context) {
+bool sam_speak(
+    const char* text,
+    const SamVoice* voice,
+    SamOutputCallback callback,
+    void* context,
+    size_t* consumed) {
+    if(consumed) *consumed = 0;
     if(!text || !voice || !callback) return false;
     size_t len = strlen(text);
     if(len == 0 || len > SAM_MAX_INPUT) return false;
@@ -5304,6 +5321,7 @@ bool sam_speak(const char* text, const SamVoice* voice, SamOutputCallback callba
     }
     strcat(input, "[");
     if(!TextToPhonemes((unsigned char*)input)) return false;
+    if(consumed) *consumed = reciter_stop ? reciter_stop : len;
     SetInput(input);
     if(!SAMMain()) return false;
     return !sam_aborted;

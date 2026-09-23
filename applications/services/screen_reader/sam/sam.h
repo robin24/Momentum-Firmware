@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -15,7 +16,7 @@ extern "C" {
 #endif
 
 /** Longest text sam_speak accepts, in characters. */
-#define SAM_MAX_INPUT 254
+#define SAM_MAX_INPUT 250
 
 typedef struct {
     uint8_t pitch; /**< 64 by default; smaller values give a higher voice */
@@ -34,10 +35,18 @@ typedef struct {
 typedef bool (*SamOutputCallback)(const uint8_t values[5], uint16_t delta, void* context);
 
 /**
- * Render text. Returns true when the whole text was rendered; false when the text was empty,
- * longer than SAM_MAX_INPUT, could not be converted to phonemes, or the callback aborted.
+ * Render text. Returns true when the text was rendered, up to `consumed`; false when the text was
+ * empty, longer than SAM_MAX_INPUT, could not be converted to phonemes, or the callback aborted.
+ * `consumed` (may be NULL) receives the number of characters of `text` that were rendered: the
+ * whole length normally, less when the reciter ran out of room at a word boundary (its phoneme
+ * string holds 120 characters); call again with `text + consumed` for the rest.
  */
-bool sam_speak(const char* text, const SamVoice* voice, SamOutputCallback callback, void* context);
+bool sam_speak(
+    const char* text,
+    const SamVoice* voice,
+    SamOutputCallback callback,
+    void* context,
+    size_t* consumed);
 
 #ifdef __cplusplus
 }
