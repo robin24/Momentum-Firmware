@@ -176,6 +176,9 @@ static void speech_drop_speaker(Speech* speech) {
 }
 
 static void speech_apply_stop(Speech* speech) {
+    // Consume the request: speech_superseded only reads the flag, so without this the next
+    // wait would see it again and apply the stop a second time, dropping what was queued after it
+    furi_thread_flags_clear(SPEECH_FLAG_STOP);
     speech_lock(speech);
     speech_queue_stop(&speech->queue);
     speech_unlock(speech);

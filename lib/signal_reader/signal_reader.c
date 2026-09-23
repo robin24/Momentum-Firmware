@@ -196,7 +196,12 @@ void signal_reader_start(SignalReader* instance, SignalReaderCallback callback, 
     instance->cnt_en = SIGNAL_READER_CAPTURE_TIM->CR1;
     instance->cnt_en |= TIM_CR1_CEN;
 
-    furi_hal_bus_enable(FuriHalBusTIM16);
+    // TIM16 is shared with the speaker, and the speaker mutex is its single owner token:
+    // acquiring it enables the timer and parks the speaker pin on the timer's alternate
+    // function; the compare mode below is frozen and the main output is never enabled, so the
+    // speaker stays silent. Speech and beeps wait or skip while the listener holds it; enabling
+    // the bus directly would furi_check against a speaker user that already enabled it.
+    furi_check(furi_hal_speaker_acquire(FuriWaitForever));
 
     // Capture timer config
     LL_TIM_SetPrescaler(SIGNAL_READER_CAPTURE_TIM, 0);
@@ -318,5 +323,6 @@ void signal_reader_stop(SignalReader* instance) {
     // Deinit DMA Trigger timer
     LL_DMA_DeInit(SIGNAL_READER_DMA_TRIGGER_DEF);
 
-    furi_hal_bus_disable(FuriHalBusTIM16);
+    // Stops the timer, disables the bus (which resets the peripheral) and returns the speaker
+    furi_hal_speaker_release();
 }

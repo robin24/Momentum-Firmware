@@ -1,4 +1,5 @@
 #include "screen_reader_cli.h"
+#include "speech_queue.h"
 
 #include <furi.h>
 #include <cli/cli.h>
@@ -157,14 +158,24 @@ static void sr_cli_watch(PipeSide* pipe, ScreenReader* sr);
 
 static void sr_cli_say(ScreenReader* sr, FuriString* args) {
     const char* text = furi_string_get_cstr(args);
-    if(strlen(text) == 0) {
+    size_t length = strlen(text);
+    if(length == 0) {
         printf("say what?\r\n");
         return;
     }
     speech_say(screen_reader_get_speech(sr), text, true, false);
-    printf(
-        "queued %u characters; sr status shows the timing when it is done\r\n",
-        (unsigned)strlen(text));
+    // A queue item holds SPEECH_ITEM_TEXT_MAX - 1 characters; longer text is cut there
+    size_t queued = length < SPEECH_ITEM_TEXT_MAX ? length : SPEECH_ITEM_TEXT_MAX - 1;
+    if(queued < length) {
+        printf(
+            "queued %u of %u characters, cut; sr status shows the timing when it is done\r\n",
+            (unsigned)queued,
+            (unsigned)length);
+    } else {
+        printf(
+            "queued %u characters; sr status shows the timing when it is done\r\n",
+            (unsigned)queued);
+    }
 }
 
 static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
