@@ -5315,9 +5315,11 @@ bool sam_speak(
 
     memset(input, 0, sizeof(input));
     memcpy(input, text, len);
-    // The original upper cases every character except the first; kept for identical output
-    for(size_t i = 1; input[i] != 0; i++) {
-        input[i] = to_upper_case(input[i]);
+    for(size_t i = 0; input[i] != 0; i++) {
+        // port addition: these fold to the reciter's end marker and would cut the text short
+        if((input[i] & 127) == '[' || (input[i] & 127) == '{') input[i] = ' ';
+        // The original upper cases every character except the first; kept for identical output
+        if(i != 0) input[i] = to_upper_case(input[i]);
     }
     strcat(input, "[");
     if(!TextToPhonemes((unsigned char*)input)) return false;
