@@ -1,7 +1,7 @@
 /**
  * @file speech_text.c
  * Pronunciation rewriting and chunking for the screen reader's speech. The rule numbers are the
- * plan's; a token goes through rules 3, 6, 5, 4 with 12, 7 and 8 in that order.
+ * plan's; a token goes through rules 3, 6, 5, 4 with 12, 7, 13 and 8 in that order.
  *
  * 1. A one character announcement is named: a letter by its upper case letter (A as "ay"), a
  *    digit by its word, punctuation by its name.
@@ -14,16 +14,19 @@
  *    when one to five upper case letters outside the stop list, copied otherwise.
  * 6. Digits, optionally with a decimal part, are a number: words up to six digits without a
  *    leading zero, digits one by one otherwise, "point" and digits for the decimal part.
- * 7. Two to five upper case letters and digits with at least one letter are spelled, unless the
- *    token is a real word from the stop list.
+ * 7. Upper case letters and digits, two or more with at least one letter, outside the stop list,
+ *    are spelled by runs: one to five letters character by character unless the run is a stop
+ *    word, longer letter runs as a word, one to three digits as a number, longer digit runs
+ *    digit by digit.
  * 8. Other tokens are copied, in pieces of at most 20 characters: the synthesizer never returns
  *    on words of about 30 letters.
  * 9. Between tokens, sentence punctuation is attached to the previous word, a colon becomes a
  *    comma (a space between digits), symbols become words, everything else a single space.
  * 10. Chunks end at a sentence, a comma or a word boundary when possible.
  * 11. A hyphen before a digit that is not inside a token is "minus".
- * 12. A hyphen between two digits inside a token is "to" when it is the token's only hyphen and
- *    "dash" when there are more.
+ * 12. A hyphen with a digit on at least one side is "to" when it is the only hyphen of a token
+ *    made of digit runs, and "dash" otherwise.
+ * 13. A token that is the single upper case letter A is "ay".
  */
 #include "speech_text.h"
 
@@ -220,9 +223,10 @@ static bool all_upper(const char* s, size_t n) {
     return true;
 }
 
-/** Rule 7: two to five upper case letters and digits, at least one letter, not a stop word. */
+/** Rule 7's shape: upper case letters and digits, two or more characters, at least one letter,
+ * the whole token not a stop word. */
 static bool is_acronym(const char* s, size_t n) {
-    if(n < 2 || n > 5) return false;
+    if(n < 2) return false;
     bool has_letter = false;
     for(size_t i = 0; i < n; i++) {
         if(is_upper(s[i])) {
@@ -239,6 +243,44 @@ static void spell(Out* o, const char* s, size_t n) {
     for(size_t i = 0; i < n; i++) {
         char letter[2] = {s[i], '\0'};
         out_word(o, s[i] == 'A' ? "ay" : letter);
+    }
+}
+
+/** Rule 8: copy in pieces of at most 20 characters. */
+static void copy_pieces(Out* o, const char* s, size_t n) {
+    while(n > 0) {
+        char piece[21];
+        size_t m = n < 20 ? n : 20;
+        memcpy(piece, s, m);
+        piece[m] = '\0';
+        out_word(o, piece);
+        s += m;
+        n -= m;
+    }
+}
+
+/** Rule 7: spell by runs. A run of one to five letters is spelled unless it is a stop word,
+ * a longer letter run is copied as a word; a run of one to three digits is a number, a longer
+ * digit run is spoken digit by digit. */
+static void spell_by_runs(Out* o, const char* s, size_t n) {
+    size_t i = 0;
+    while(i < n) {
+        size_t start = i;
+        bool digits = is_digit(s[i]);
+        while(i < n && is_digit(s[i]) == digits)
+            i++;
+        size_t len = i - start;
+        if(digits) {
+            if(len <= 3) {
+                number_token(o, s + start, len);
+            } else {
+                digits_one_by_one(o, s + start, len);
+            }
+        } else if(len <= 5 && !is_stop_word(s + start, len)) {
+            spell(o, s + start, len);
+        } else {
+            copy_pieces(o, s + start, len);
+        }
     }
 }
 
@@ -278,19 +320,6 @@ static size_t number_before_letters(const char* s, size_t n) {
     return i;
 }
 
-/** Rule 8: copy in pieces of at most 20 characters. */
-static void copy_pieces(Out* o, const char* s, size_t n) {
-    while(n > 0) {
-        char piece[21];
-        size_t m = n < 20 ? n : 20;
-        memcpy(piece, s, m);
-        piece[m] = '\0';
-        out_word(o, piece);
-        s += m;
-        n -= m;
-    }
-}
-
 /** Rule 5: the letters after a number. */
 static void process_unit(Out* o, const char* s, size_t n) {
     if(out_term(o, s, n)) return;
@@ -304,12 +333,18 @@ static void process_unit(Out* o, const char* s, size_t n) {
 static void process_token(Out* o, const char* s, size_t n);
 
 /** Rules 4 and 12: split at every `sep` and process each part as a token. Periods get "dot"
- * between the parts. A hyphen between two digits gets "to" when it is the token's only hyphen
- * and "dash" when there are more; other hyphens get nothing. */
+ * between the parts. A hyphen with a digit on at least one side gets "to" when it is the only
+ * hyphen of a token whose parts are all digit runs, and "dash" otherwise; a hyphen between
+ * letters gets nothing. */
 static void split_token(Out* o, const char* s, size_t n, char sep) {
     size_t count = 0;
+    bool digit_parts = true;
     for(size_t i = 0; i < n; i++) {
-        if(s[i] == sep) count++;
+        if(s[i] == sep) {
+            count++;
+        } else if(!is_digit(s[i])) {
+            digit_parts = false;
+        }
     }
     size_t start = 0;
     for(size_t i = 0; i <= n; i++) {
@@ -318,8 +353,8 @@ static void split_token(Out* o, const char* s, size_t n, char sep) {
         if(i < n) {
             if(sep == '.') {
                 out_word(o, "dot");
-            } else if(i > 0 && is_digit(s[i - 1]) && i + 1 < n && is_digit(s[i + 1])) {
-                out_word(o, count == 1 ? "to" : "dash");
+            } else if((i > 0 && is_digit(s[i - 1])) || (i + 1 < n && is_digit(s[i + 1]))) {
+                out_word(o, digit_parts && count == 1 ? "to" : "dash");
             }
         }
         start = i + 1;
@@ -342,7 +377,7 @@ static void process_token(Out* o, const char* s, size_t n) {
         process_unit(o, s + number, n - number);
         return;
     }
-    // Rule 4: periods that are not a decimal point, then hyphens that matched nothing
+    // Rule 4: periods that are not a decimal point, then hyphens (rule 12 for digits)
     if(memchr(s, '.', n)) {
         split_token(o, s, n, '.');
         return;
@@ -353,7 +388,12 @@ static void process_token(Out* o, const char* s, size_t n) {
     }
     // Rule 7
     if(is_acronym(s, n)) {
-        spell(o, s, n);
+        spell_by_runs(o, s, n);
+        return;
+    }
+    // Rule 13
+    if(n == 1 && s[0] == 'A') {
+        out_word(o, "ay");
         return;
     }
     // Rule 8
@@ -485,7 +525,7 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
 size_t speech_text_next_chunk(const char* text, size_t* pos, char* chunk, size_t chunk_size) {
     if(chunk_size == 0) return 0;
     chunk[0] = '\0';
-    if(!text) return 0;
+    if(chunk_size < 2 || !text) return 0;
     size_t len = strlen(text);
     size_t start = *pos;
     while(start < len && text[start] == ' ')
