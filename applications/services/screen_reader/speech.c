@@ -287,11 +287,17 @@ static void speech_item_end(Speech* speech) {
 
 /**
  * The card mounts after the services start, so the vocabulary is looked for when it is
- * first needed and then remembered. Reads the generator's settings line for sr voice status.
+ * first needed and then remembered while the card stays mounted. A removed card is noticed at
+ * the next utterance and the vocabulary is looked for again once a card is back. Reads the
+ * generator's settings line for sr voice status.
  */
 static bool speech_voice_ready(Speech* speech) {
+    if(storage_sd_status(speech->storage) != FSE_OK) {
+        speech->vocabulary = false;
+        speech->voice_settings[0] = '\0';
+        return false;
+    }
     if(speech->vocabulary) return true;
-    if(storage_sd_status(speech->storage) != FSE_OK) return false;
     if(!storage_dir_exists(speech->storage, SPEECH_VOICE_DIR)) return false;
     speech->vocabulary = true;
     File* file = speech->voice_file;
@@ -363,32 +369,41 @@ static void speech_sam_word(Speech* speech, const char* word, const SamVoice* vo
     }
 }
 
-/** The expanded text word by word: a clip when the card has it, SAM when not, then the pause. */
+/**
+ * The expanded text word by word: a clip when the card has it, SAM when not. A token's pause
+ * is pushed before the next token, so it separates the two and none follows the last one: the
+ * play out starts right after the last word. A token of punctuation only speaks nothing, but
+ * its pause still goes between its neighbours.
+ */
 static void speech_speak_words(Speech* speech, const SamVoice* voice) {
     size_t pos = 0;
     SpeechVoiceWord word;
+    uint32_t pending_pause_ms = 0;
     while(!speech->aborted && speech_voice_next_word(speech->expanded, &pos, &word)) {
-        if(word.word[0] != '\0') {
-            if(speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
-               speech_play_clip(speech, speech->path)) {
-                speech->voice.clip_words++;
-            } else {
-                speech->voice.fallback_words++;
-                speech_voice_missing(&speech->voice, word.word);
-                speech_sam_word(speech, word.word, voice);
-            }
+        if(pending_pause_ms > 0 && !speech_push_silence(speech, pending_pause_ms)) break;
+        pending_pause_ms = word.pause_ms;
+        if(word.word[0] == '\0') continue;
+        if(speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
+           speech_play_clip(speech, speech->path)) {
+            speech->voice.clip_words++;
+        } else {
+            speech->voice.fallback_words++;
+            speech_voice_missing(&speech->voice, word.word);
+            speech_sam_word(speech, word.word, voice);
         }
-        if(speech->aborted) break;
-        if(!speech_push_silence(speech, word.pause_ms)) break;
     }
 }
 
-/** Append the words the last utterance lacked to the missing list on the card. */
+/**
+ * Append the words the last utterance lacked to the missing list on the card. When the file
+ * cannot be opened the words stay in the log and a later utterance writes them.
+ */
 static void speech_write_missing(Speech* speech) {
     size_t n = speech_voice_log_count(&speech->voice);
     if(n == 0) return;
     File* file = speech->voice_file;
-    if(storage_file_open(file, SPEECH_VOICE_MISSING_PATH, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+    bool opened = storage_file_open(file, SPEECH_VOICE_MISSING_PATH, FSAM_WRITE, FSOM_OPEN_APPEND);
+    if(opened) {
         for(size_t i = 0; i < n; i++) {
             const char* w = speech_voice_log_word(&speech->voice, i);
             storage_file_write(file, w, strlen(w));
@@ -396,7 +411,7 @@ static void speech_write_missing(Speech* speech) {
         }
     }
     storage_file_close(file);
-    speech_voice_log_clear(&speech->voice);
+    if(opened) speech_voice_log_clear(&speech->voice);
 }
 
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
