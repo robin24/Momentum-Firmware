@@ -4416,6 +4416,10 @@ static void Parser2(void) {
         // Get next phoneme
         X++;
         A = phonemeindex[X];
+        if(A == 255) { // port guard: the end of the list has no flags entry
+            pos++;
+            continue;
+        }
         //pos41841
         // Is the next phoneme a pause?
         if(A != 0) {
