@@ -38,7 +38,8 @@ void speech_pcm_reset(SpeechPcm* pcm);
 uint8_t speech_pcm_silence(const SpeechPcm* pcm);
 
 /** Feed five values held for delta / 8 microseconds each plus the overhead. Emits one duty byte
- *  per slot boundary crossed. Returns false when emit asked to stop. */
+ *  per slot boundary crossed. Returns false when emit asked to stop; the stage then sits inside
+ *  the refused value, so call speech_pcm_reset before pushing again. */
 bool speech_pcm_push(
     SpeechPcm* pcm,
     const uint8_t values[5],
