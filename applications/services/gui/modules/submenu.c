@@ -132,8 +132,7 @@ static void submenu_view_draw_callback(Canvas* canvas, void* _model) {
             }
 
             if(position == model->position) {
-                canvas_tap_hint_focus(
-                    canvas, position + 1, SubmenuItemArray_size(model->items));
+                canvas_tap_hint_focus(canvas, position + 1, SubmenuItemArray_size(model->items));
             }
 
             FuriString* disp_str = furi_string_alloc_set(SubmenuItemArray_cref(it)->label);

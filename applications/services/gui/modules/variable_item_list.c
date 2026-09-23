@@ -111,8 +111,7 @@ static void variable_item_list_draw_callback(Canvas* canvas, void* _model) {
             }
 
             if(position == model->position) {
-                canvas_tap_hint_focus(
-                    canvas, position + 1, VariableItemArray_size(model->items));
+                canvas_tap_hint_focus(canvas, position + 1, VariableItemArray_size(model->items));
             }
 
             elements_scrollable_text_line(
