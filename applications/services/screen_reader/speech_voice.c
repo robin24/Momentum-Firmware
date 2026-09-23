@@ -12,13 +12,15 @@ static bool sv_is_punct(char c) {
 
 bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out) {
     size_t i = *pos;
-    while(text[i] != '\0' && sv_is_space(text[i])) i++;
+    while(text[i] != '\0' && sv_is_space(text[i]))
+        i++;
     if(text[i] == '\0') {
         *pos = i;
         return false;
     }
     size_t start = i;
-    while(text[i] != '\0' && !sv_is_space(text[i])) i++;
+    while(text[i] != '\0' && !sv_is_space(text[i]))
+        i++;
     size_t end = i;
     *pos = i;
 
@@ -31,8 +33,10 @@ bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out)
         out->pause_ms = SPEECH_VOICE_GAP_MS;
     }
 
-    while(start < end && sv_is_punct(text[start])) start++;
-    while(end > start && sv_is_punct(text[end - 1])) end--;
+    while(start < end && sv_is_punct(text[start]))
+        start++;
+    while(end > start && sv_is_punct(text[end - 1]))
+        end--;
     size_t n = end - start;
     if(n > SPEECH_VOICE_WORD_MAX - 1) n = SPEECH_VOICE_WORD_MAX - 1;
     for(size_t k = 0; k < n; k++) {
