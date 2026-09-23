@@ -43,7 +43,6 @@ struct Speech {
     uint16_t fill_index;
     bool running;
     bool aborted;
-    bool stop_pending;
     uint32_t generation;
     uint8_t lut_volume;
     char expanded[SPEECH_TEXT_MAX];
@@ -68,27 +67,34 @@ static uint32_t half_flag(uint8_t half) {
     return half == 0 ? SPEECH_FLAG_HALF0 : SPEECH_FLAG_HALF1;
 }
 
-/** A newer utterance, a stop request or a key press makes the current one worthless. */
+/**
+ * A newer utterance or a stop request makes the current one worthless. Both bump the queue
+ * generation under the mutex, on the requesting thread, and every item carries the generation
+ * it was pushed in, so this comparison is the only thing that ends an utterance; the stop flag
+ * merely wakes a DMA wait so that the comparison runs at once.
+ */
 static bool speech_superseded(Speech* speech) {
-    if(speech->stop_pending) return true;
-    if(furi_thread_flags_get() & SPEECH_FLAG_STOP) {
-        speech->stop_pending = true;
-        return true;
-    }
     return *(volatile uint32_t*)&speech->queue.generation != speech->generation;
 }
 
-/** Wait until the DMA has finished playing `half`. False when stopped or when no event came. */
+/**
+ * Wait until the DMA has finished playing `half`. False when the utterance was superseded
+ * meanwhile or when no event came in time. A stop flag that wakes the wait is judged by the
+ * generation: a flag left over from a stop that already ended an earlier utterance makes this
+ * one look and keep waiting.
+ */
 static bool speech_wait_half_played(Speech* speech, uint8_t half) {
     uint32_t wanted = half_flag(half);
-    uint32_t flags = furi_thread_flags_wait(
-        wanted | SPEECH_FLAG_STOP, FuriFlagWaitAny, SPEECH_EVENT_TIMEOUT_MS);
-    if(flags & FuriFlagError) return false;
-    if(flags & SPEECH_FLAG_STOP) {
-        speech->stop_pending = true;
-        return false;
+    uint32_t started = furi_get_tick();
+    while(true) {
+        uint32_t waited = furi_get_tick() - started;
+        if(waited >= SPEECH_EVENT_TIMEOUT_MS) return false;
+        uint32_t flags = furi_thread_flags_wait(
+            wanted | SPEECH_FLAG_STOP, FuriFlagWaitAny, SPEECH_EVENT_TIMEOUT_MS - waited);
+        if(flags & FuriFlagError) return false;
+        if(speech_superseded(speech)) return false;
+        if(flags & wanted) return true;
     }
-    return (flags & wanted) != 0;
 }
 
 // Called by the PCM stage for every duty byte, on the worker thread
@@ -132,7 +138,11 @@ static bool speech_sam_output(const uint8_t values[5], uint16_t delta, void* con
     return speech_pcm_push(&speech->pcm, values, delta, speech_emit, speech);
 }
 
-/** Play out what was rendered and stop the hardware cleanly. */
+/**
+ * Play out what was rendered and stop the hardware cleanly. A stop request or a newer
+ * utterance ends the play out at the wait it lands in and the hardware stops at once: what
+ * would follow is padding, and a key press must silence the speaker without delay.
+ */
 static void speech_flush(Speech* speech) {
     uint8_t silence = speech_pcm_silence(&speech->pcm);
     if(!speech->running) {
@@ -144,15 +154,20 @@ static void speech_flush(Speech* speech) {
         speech->running = true;
         speech_wait_half_played(speech, 0);
     } else {
+        // The half being filled ends in silence. The DMA is still in the other half; once
+        // that has played it moves into this one, the other half is silenced too, and the
+        // hardware stops when the DMA has played this one
         uint8_t h = speech->fill_half;
         memset(
             &speech->ring[h * SPEECH_HALF + speech->fill_index],
             silence,
             SPEECH_HALF - speech->fill_index);
-        speech_wait_half_played(speech, h ^ 1);
-        memset(&speech->ring[(h ^ 1) * SPEECH_HALF], silence, SPEECH_HALF);
-        speech_wait_half_played(speech, h);
+        if(speech_wait_half_played(speech, h ^ 1)) {
+            memset(&speech->ring[(h ^ 1) * SPEECH_HALF], silence, SPEECH_HALF);
+            speech_wait_half_played(speech, h);
+        }
     }
+    if(speech_superseded(speech)) speech->aborted = true;
     speech_hw_stop();
     speech->running = false;
 }
@@ -190,16 +205,6 @@ static void speech_drop_speaker(Speech* speech) {
     speech_lock(speech);
     speech->stats.speaker_held = false;
     speech_unlock(speech);
-}
-
-static void speech_apply_stop(Speech* speech) {
-    // Consume the request: speech_superseded only reads the flag, so without this the next
-    // wait would see it again and apply the stop a second time, dropping what was queued after it
-    furi_thread_flags_clear(SPEECH_FLAG_STOP);
-    speech_lock(speech);
-    speech_queue_stop(&speech->queue);
-    speech_unlock(speech);
-    speech->stop_pending = false;
 }
 
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
@@ -303,12 +308,10 @@ static int32_t speech_worker(void* context) {
             speech_drop_speaker(speech);
             continue;
         }
-        if(flags & SPEECH_FLAG_STOP) speech->stop_pending = true;
-        if(speech->stop_pending) speech_apply_stop(speech);
-
+        // A stop request has already retired the queue on the requesting thread; its flag
+        // only wakes this loop, which then finds nothing or what was pushed after the request
         while(speech_pop(speech, item)) {
             speech_speak_item(speech, item);
-            if(speech->stop_pending) speech_apply_stop(speech);
         }
     }
     return 0;
@@ -343,6 +346,17 @@ void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceab
 
 void speech_stop(Speech* speech) {
     furi_check(speech);
+    // Retire the queue here, on the requesting thread, so that the stop takes effect at the
+    // request: what waits is dropped and the generation moves on, which supersedes what is
+    // being spoken at its next sample or wake up, while anything pushed from now on carries
+    // the new generation and survives however late the worker looks. Applied on the worker
+    // instead, the stop of a key press wiped the announcement that same press caused, pushed
+    // 50 ms later while the worker was still playing out. The flag then wakes the worker out
+    // of a DMA wait. The mutex is held for microseconds by every user, and the callers are
+    // threads (input service, console, reader), never interrupts
+    speech_lock(speech);
+    speech_queue_stop(&speech->queue);
+    speech_unlock(speech);
     furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_STOP);
 }
 

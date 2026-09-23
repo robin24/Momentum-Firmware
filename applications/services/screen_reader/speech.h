@@ -17,7 +17,8 @@ typedef struct Speech Speech;
 typedef struct {
     uint32_t utterances; /**< started */
     uint32_t dropped; /**< could not get the speaker */
-    uint32_t aborted; /**< interrupted by a newer utterance, a stop, or a key press */
+    uint32_t aborted; /**< ended early by a newer utterance, a stop or a key press, also while
+                           waiting for the speaker or playing out the end */
     uint32_t underruns; /**< DMA reached a half before it was filled */
     uint32_t queue_dropped; /**< pushed out of a full queue */
     uint32_t queued; /**< items waiting */
@@ -36,7 +37,9 @@ Speech* speech_alloc(void);
  *  replaceable item is overwritten instead of queued behind it. */
 void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable);
 
-/** Stop speaking and drop the queue. Safe from any thread, including input callbacks. */
+/** Stop speaking and drop what is queued so far; anything pushed afterwards is kept. Takes the
+ *  speech mutex briefly, so callers are threads (input callbacks run on the input service
+ *  thread), never interrupts. */
 void speech_stop(Speech* speech);
 
 /** rate is the SAM speed (40..120), volume 0..100. Applied from the next utterance on. */

@@ -98,8 +98,10 @@ static void sr_input_callback(const void* value, void* context) {
     ScreenReader* sr = context;
     if(event->type == InputTypePress) {
         sr->last_press_tick = furi_get_tick();
-        // Any key silences speech. This only sets a thread flag, so it is safe here on the
-        // input thread, and it lands before the app has seen the key
+        // Any key silences speech. speech_stop retires the queue under the speech mutex (its
+        // users hold it for microseconds) and wakes the worker; this callback runs on the
+        // input service thread, not in an interrupt, and the stop lands before the app has
+        // seen the key, so the announcement the key causes is queued after it and survives
         speech_stop(sr->speech);
     }
 }
