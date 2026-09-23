@@ -5324,6 +5324,9 @@ bool sam_speak(
     strcat(input, "[");
     if(!TextToPhonemes((unsigned char*)input)) return false;
     if(consumed) *consumed = reciter_stop ? reciter_stop : len;
+    // port guard: a phoneme string longer than the buffer wraps onto the leading space, and the
+    // rules that look at the prior phoneme rely on position 0 being a pause
+    if(input[0] != ' ') return false;
     SetInput(input);
     if(!SAMMain()) return false;
     return !sam_aborted;
