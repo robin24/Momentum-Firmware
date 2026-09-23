@@ -19,6 +19,7 @@ struct ScreenReader {
     FuriThreadId thread_id;
     FuriMutex* mutex;
     Gui* gui;
+    Speech* speech;
 
     // Written on the GUI thread between frame_begin and frame_end
     bool capturing;
@@ -153,6 +154,8 @@ void screen_reader_set_enabled(ScreenReader* sr, bool enabled) {
         sr->model.have_prev = false;
         sr_unlock(sr);
         gui_update(sr->gui);
+    } else {
+        speech_stop(sr->speech);
     }
 }
 
@@ -168,6 +171,11 @@ void screen_reader_get_stats(ScreenReader* sr, ScreenReaderStats* out) {
     sr_unlock(sr);
 }
 
+Speech* screen_reader_get_speech(ScreenReader* sr) {
+    furi_check(sr);
+    return sr->speech;
+}
+
 static const GuiTap screen_reader_tap = {
     .frame_begin = sr_frame_begin,
     .text = sr_text,
@@ -181,6 +189,9 @@ int32_t screen_reader_srv(void* p) {
     sr->thread_id = furi_thread_get_current_id();
     sr->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     sr_model_init(&sr->model, momentum_settings.sr_verbosity);
+    sr->speech = speech_alloc();
+    speech_set_voice(
+        sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)momentum_settings.sr_volume);
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);

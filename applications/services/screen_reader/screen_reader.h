@@ -6,6 +6,7 @@
 
 #include <furi.h>
 #include "screen_model.h"
+#include "speech.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,6 +37,9 @@ void screen_reader_set_enabled(ScreenReader* sr, bool enabled);
 bool screen_reader_is_enabled(ScreenReader* sr);
 
 void screen_reader_get_stats(ScreenReader* sr, ScreenReaderStats* out);
+
+/** The speech engine, for the console command. */
+Speech* screen_reader_get_speech(ScreenReader* sr);
 
 #ifdef __cplusplus
 }

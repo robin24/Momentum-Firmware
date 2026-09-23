@@ -79,6 +79,10 @@ static void sr_cli_usage(void) {
     printf("  watch    stream announcements; arrows, Enter, Backspace drive the device\r\n");
     printf("  on|off   enable or disable the screen reader (saved)\r\n");
     printf("  status   show state and counters\r\n");
+    printf("  say <text>   speak text now; sr status shows its timing when done\r\n");
+    printf("  stop         stop speaking\r\n");
+    printf("  rate <n>     SAM speed 40..120, bigger is slower (saved)\r\n");
+    printf("  volume <n>   0..100 (saved)\r\n");
 }
 
 static void sr_cli_screen(ScreenReader* sr) {
@@ -128,10 +132,61 @@ static void sr_cli_status(ScreenReader* sr) {
         (unsigned long)stats.frames,
         (unsigned long)stats.dropped_frames,
         (unsigned long)stats.announcements);
+    SpeechStats speech;
+    speech_get_stats(screen_reader_get_speech(sr), &speech);
+    printf(
+        "speech: %s, queued %lu, speaker held: %s, utterances %lu, aborted %lu, dropped %lu, underruns %lu, queue dropped %lu\r\n",
+        speech.speaking ? "speaking" : "idle",
+        (unsigned long)speech.queued,
+        speech.speaker_held ? "yes" : "no",
+        (unsigned long)speech.utterances,
+        (unsigned long)speech.aborted,
+        (unsigned long)speech.dropped,
+        (unsigned long)speech.underruns,
+        (unsigned long)speech.queue_dropped);
+    printf(
+        "last utterance: %lu ms played, %lu subsamples, %lu ms nominal, worker stack free %lu\r\n",
+        (unsigned long)speech.last_played_ms,
+        (unsigned long)speech.last_subsamples,
+        (unsigned long)speech.last_nominal_ms,
+        (unsigned long)speech.stack_free);
     printf("free heap: %zu\r\n", memmgr_get_free_heap());
 }
 
 static void sr_cli_watch(PipeSide* pipe, ScreenReader* sr);
+
+static void sr_cli_say(ScreenReader* sr, FuriString* args) {
+    const char* text = furi_string_get_cstr(args);
+    if(strlen(text) == 0) {
+        printf("say what?\r\n");
+        return;
+    }
+    speech_say(screen_reader_get_speech(sr), text, true, false);
+    printf(
+        "queued %u characters; sr status shows the timing when it is done\r\n",
+        (unsigned)strlen(text));
+}
+
+static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
+    int value = 0;
+    int lo = rate ? 40 : 0;
+    int hi = rate ? 120 : 100;
+    if(!args_read_int_and_trim(args, &value) || value < lo || value > hi) {
+        printf("expected a number from %d to %d\r\n", lo, hi);
+        return;
+    }
+    if(rate) {
+        momentum_settings.sr_rate = (uint32_t)value;
+    } else {
+        momentum_settings.sr_volume = (uint32_t)value;
+    }
+    momentum_settings_save();
+    speech_set_voice(
+        screen_reader_get_speech(sr),
+        (uint8_t)momentum_settings.sr_rate,
+        (uint8_t)momentum_settings.sr_volume);
+    printf("%s set to %d\r\n", rate ? "rate" : "volume", value);
+}
 
 static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
     ScreenReader* sr = context;
@@ -153,6 +208,15 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
             printf("screen reader off\r\n");
         } else if(furi_string_cmp_str(cmd, "status") == 0) {
             sr_cli_status(sr);
+        } else if(furi_string_cmp_str(cmd, "say") == 0) {
+            sr_cli_say(sr, args);
+        } else if(furi_string_cmp_str(cmd, "stop") == 0) {
+            speech_stop(screen_reader_get_speech(sr));
+            printf("stopped\r\n");
+        } else if(furi_string_cmp_str(cmd, "rate") == 0) {
+            sr_cli_set_number(sr, args, true);
+        } else if(furi_string_cmp_str(cmd, "volume") == 0) {
+            sr_cli_set_number(sr, args, false);
         } else {
             sr_cli_usage();
         }
