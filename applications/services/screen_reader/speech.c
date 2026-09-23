@@ -12,7 +12,7 @@
 
 #define SPEECH_RING_SIZE          4096
 #define SPEECH_HALF               (SPEECH_RING_SIZE / 2)
-#define SPEECH_OVERHEAD_NS        0 /* Task 5 calibrates this against the Text to SAM demo */
+#define SPEECH_OVERHEAD_NS        7400 /* calibrated against the Text to SAM demo, Task 5 */
 #define SPEECH_IDLE_RELEASE_MS    200
 #define SPEECH_ACQUIRE_TIMEOUT_MS 500
 #define SPEECH_EVENT_TIMEOUT_MS   200
