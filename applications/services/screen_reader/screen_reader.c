@@ -97,6 +97,9 @@ static void sr_input_callback(const void* value, void* context) {
     ScreenReader* sr = context;
     if(event->type == InputTypePress) {
         sr->last_press_tick = furi_get_tick();
+        // Any key silences speech. This only sets a thread flag, so it is safe here on the
+        // input thread, and it lands before the app has seen the key
+        speech_stop(sr->speech);
     }
 }
 
@@ -115,6 +118,12 @@ static void sr_process(ScreenReader* sr) {
         sr->stats.frames++;
         sr->stats.announcements += n;
         for(size_t i = 0; i < n; i++) {
+            if(momentum_settings.screen_reader) {
+                // Screen and focus announcements interrupt what is being said; a change on
+                // the same screen waits its turn and replaces a change still waiting
+                const SrAnnouncement* a = &sr->announcements[i];
+                speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
+            }
             if(sr->watch_queue) {
                 furi_message_queue_put(sr->watch_queue, &sr->announcements[i], 0);
             }
