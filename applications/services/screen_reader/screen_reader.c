@@ -14,6 +14,7 @@
 #define SR_SETTLE_MS      50
 #define SR_MAX_LATENCY_MS 300
 #define SR_KEY_RECENT_MS  500
+#define SR_DESKTOP_KEY_MS 2000
 
 struct ScreenReader {
     FuriThreadId thread_id;
@@ -111,21 +112,32 @@ static void sr_process(ScreenReader* sr) {
         memcpy(&sr->working, &sr->ready, sizeof(SrFrame));
         sr->ready_valid = false;
         uint32_t now = furi_get_tick();
-        bool key_recent = (now - sr->last_press_tick) < SR_KEY_RECENT_MS;
+        uint32_t since_press = now - sr->last_press_tick;
+        bool key_recent = since_press < SR_KEY_RECENT_MS;
+        // The home screen keeps redrawing its dolphin speech bubbles, and they arrive as
+        // changes on the same screen. Without a key press in the last two seconds nobody asked
+        // for them, so they are not spoken; they still reach the console mirror, and "Home
+        // screen" on arrival is a different kind and stays
+        bool quiet_desktop = sr->working.content_layer == SrLayerDesktop &&
+                             since_press >= SR_DESKTOP_KEY_MS;
         sr->model.verbosity = momentum_settings.sr_verbosity;
         size_t n = sr_model_process(
             &sr->model, &sr->working, now, key_recent, sr->announcements, SR_MAX_ANNOUNCEMENTS);
         sr->stats.frames++;
-        sr->stats.announcements += n;
         for(size_t i = 0; i < n; i++) {
-            if(momentum_settings.screen_reader) {
-                // Screen and focus announcements interrupt what is being said; a change on
-                // the same screen waits its turn and replaces a change still waiting
-                const SrAnnouncement* a = &sr->announcements[i];
-                speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
+            const SrAnnouncement* a = &sr->announcements[i];
+            if(quiet_desktop && a->kind == SrAnnChange) {
+                sr->stats.suppressed++;
+            } else {
+                sr->stats.announcements++;
+                if(momentum_settings.screen_reader) {
+                    // Screen and focus announcements interrupt what is being said; a change
+                    // on the same screen waits its turn and replaces a change still waiting
+                    speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
+                }
             }
             if(sr->watch_queue) {
-                furi_message_queue_put(sr->watch_queue, &sr->announcements[i], 0);
+                furi_message_queue_put(sr->watch_queue, a, 0);
             }
         }
     }

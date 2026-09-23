@@ -129,10 +129,11 @@ static void sr_cli_status(ScreenReader* sr) {
         (unsigned long)momentum_settings.sr_volume,
         (unsigned long)momentum_settings.sr_verbosity);
     printf(
-        "frames: %lu, dropped: %lu, announcements: %lu\r\n",
+        "frames: %lu, dropped: %lu, announcements: %lu, suppressed: %lu\r\n",
         (unsigned long)stats.frames,
         (unsigned long)stats.dropped_frames,
-        (unsigned long)stats.announcements);
+        (unsigned long)stats.announcements,
+        (unsigned long)stats.suppressed);
     SpeechStats speech;
     speech_get_stats(screen_reader_get_speech(sr), &speech);
     printf(
