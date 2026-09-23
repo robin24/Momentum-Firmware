@@ -86,6 +86,8 @@ static void sr_cli_usage(void) {
     printf("  rate <n>     SAM speed 40..120, bigger is slower (saved)\r\n");
     printf("  volume <n>   0..100 (saved)\r\n");
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
+    printf(
+        "  voice on|off|status  recorded word clips from the card, SAM for the rest (saved)\r\n");
 }
 
 static void sr_cli_screen(ScreenReader* sr) {
@@ -121,6 +123,41 @@ static void sr_cli_screen(ScreenReader* sr) {
     free(screen);
 }
 
+static void sr_cli_print_voice(ScreenReader* sr) {
+    SpeechVoiceStats v;
+    speech_get_voice_stats(screen_reader_get_speech(sr), &v);
+    printf(
+        "voice: %s, vocabulary %s%s%s, clips %lu, fallback %lu, missing %lu\r\n",
+        v.enabled ? "on" : "off",
+        v.vocabulary ? "yes" : "no",
+        v.settings[0] ? " " : "",
+        v.settings,
+        (unsigned long)v.clip_words,
+        (unsigned long)v.fallback_words,
+        (unsigned long)v.missing_words);
+}
+
+static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
+    FuriString* sub = furi_string_alloc();
+    bool has = args_read_string_and_trim(args, sub);
+    if(has && furi_string_cmp_str(sub, "on") == 0) {
+        momentum_settings.sr_voice = true;
+        momentum_settings_save();
+        speech_set_voice_clips(screen_reader_get_speech(sr), true);
+        printf("voice on\r\n");
+    } else if(has && furi_string_cmp_str(sub, "off") == 0) {
+        momentum_settings.sr_voice = false;
+        momentum_settings_save();
+        speech_set_voice_clips(screen_reader_get_speech(sr), false);
+        printf("voice off: SAM speaks everything\r\n");
+    } else if(!has || furi_string_cmp_str(sub, "status") == 0) {
+        sr_cli_print_voice(sr);
+    } else {
+        printf("sr voice on|off|status\r\n");
+    }
+    furi_string_free(sub);
+}
+
 static void sr_cli_status(ScreenReader* sr) {
     ScreenReaderStats stats;
     screen_reader_get_stats(sr, &stats);
@@ -154,6 +191,7 @@ static void sr_cli_status(ScreenReader* sr) {
         (unsigned long)speech.last_subsamples,
         (unsigned long)speech.last_nominal_ms,
         (unsigned long)speech.stack_free);
+    sr_cli_print_voice(sr);
     printf("free heap: %zu\r\n", memmgr_get_free_heap());
 }
 
@@ -266,6 +304,8 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
             sr_cli_set_number(sr, args, false);
         } else if(furi_string_cmp_str(cmd, "play") == 0) {
             sr_cli_play(sr, args);
+        } else if(furi_string_cmp_str(cmd, "voice") == 0) {
+            sr_cli_voice(sr, args);
         } else {
             sr_cli_usage();
         }

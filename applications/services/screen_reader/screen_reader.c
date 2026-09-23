@@ -215,6 +215,7 @@ int32_t screen_reader_srv(void* p) {
     sr->speech = speech_alloc();
     speech_set_voice(
         sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)momentum_settings.sr_volume);
+    speech_set_voice_clips(sr->speech, momentum_settings.sr_voice);
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);

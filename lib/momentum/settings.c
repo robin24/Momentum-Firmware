@@ -51,6 +51,7 @@ MomentumSettings momentum_settings = {
     .sr_rate = 72, // SAM speed, bigger is slower
     .sr_volume = 100, // %
     .sr_verbosity = 1, // Normal
+    .sr_voice = true, // recorded voice from the card
 };
 
 typedef enum {
@@ -129,6 +130,7 @@ static const struct {
     {setting_uint(sr_rate, 40, 120)},
     {setting_uint(sr_volume, 0, 100)},
     {setting_uint(sr_verbosity, 0, 2)},
+    {setting_bool(sr_voice)},
 };
 
 void momentum_settings_load(void) {

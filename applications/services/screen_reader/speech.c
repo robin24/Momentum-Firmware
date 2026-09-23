@@ -5,6 +5,7 @@
 #include "speech_pcm.h"
 #include "speech_queue.h"
 #include "speech_text.h"
+#include "speech_voice.h"
 
 #include <furi_hal.h>
 #include <storage/storage.h>
@@ -27,6 +28,10 @@
 #define SPEECH_FLAG_HALF0 (1 << 2) /* DMA finished playing the first half */
 #define SPEECH_FLAG_HALF1 (1 << 3) /* DMA finished playing the second half */
 
+#define SPEECH_VOICE_HOLD_NS       (1000000000u / SPEECH_VOICE_HZ)
+#define SPEECH_VOICE_MISSING_PATH  "/ext/sr/missing.txt"
+#define SPEECH_VOICE_SETTINGS_PATH SPEECH_VOICE_DIR "/voice.txt"
+
 struct Speech {
     FuriThread* thread;
     volatile FuriThreadId thread_id;
@@ -41,6 +46,7 @@ struct Speech {
     // Set by any thread, read by the worker
     volatile uint8_t rate;
     volatile uint8_t volume;
+    volatile bool voice_enabled;
 
     // Worker thread only
     SpeechPcm pcm;
@@ -54,6 +60,13 @@ struct Speech {
     uint8_t lut_volume;
     char expanded[SPEECH_TEXT_MAX];
     char chunk[SPEECH_CHUNK_MAX + 2]; /* room for an appended period */
+
+    // Recorded voice: written by the worker only, speech_get_voice_stats reads a snapshot
+    bool vocabulary; /* SPEECH_VOICE_DIR was found on the card */
+    char voice_settings[64]; /* first line of voice.txt */
+    File* voice_file; /* reused for every clip and the missing log */
+    SpeechVoiceState voice;
+    char path[SPEECH_VOICE_PATH_MAX];
 };
 
 static void speech_lock(Speech* speech) {
@@ -272,6 +285,120 @@ static void speech_item_end(Speech* speech) {
     speech_unlock(speech);
 }
 
+/**
+ * The card mounts after the services start, so the vocabulary is looked for when it is
+ * first needed and then remembered. Reads the generator's settings line for sr voice status.
+ */
+static bool speech_voice_ready(Speech* speech) {
+    if(speech->vocabulary) return true;
+    if(storage_sd_status(speech->storage) != FSE_OK) return false;
+    if(!storage_dir_exists(speech->storage, SPEECH_VOICE_DIR)) return false;
+    speech->vocabulary = true;
+    File* file = speech->voice_file;
+    if(storage_file_open(file, SPEECH_VOICE_SETTINGS_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        size_t n =
+            storage_file_read(file, speech->voice_settings, sizeof(speech->voice_settings) - 1);
+        speech->voice_settings[n] = '\0';
+        char* nl = strpbrk(speech->voice_settings, "\r\n");
+        if(nl) *nl = '\0';
+    }
+    storage_file_close(file);
+    return true;
+}
+
+/** Silence of `ms` at the clip sample rate, through the same stage as the clips. */
+static bool speech_push_silence(Speech* speech, uint32_t ms) {
+    memset(speech->file_buffer, SPEECH_SILENCE_VALUE, SPEECH_FILE_CHUNK);
+    uint32_t left = ms * (SPEECH_VOICE_HZ / 1000);
+    while(left > 0) {
+        size_t n = left < SPEECH_FILE_CHUNK ? left : SPEECH_FILE_CHUNK;
+        if(!speech_pcm_push_raw(
+               &speech->pcm, speech->file_buffer, n, SPEECH_VOICE_HOLD_NS, speech_emit, speech)) {
+            return false;
+        }
+        left -= n;
+    }
+    return true;
+}
+
+/**
+ * One clip from the card. False when the file could not be opened: the word is missing. A
+ * superseded utterance ends the clip through speech_emit, which sets aborted, and returns true.
+ */
+static bool speech_play_clip(Speech* speech, const char* path) {
+    File* file = speech->voice_file;
+    if(!storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        storage_file_close(file);
+        return false;
+    }
+    while(!speech->aborted) {
+        size_t n = storage_file_read(file, speech->file_buffer, SPEECH_FILE_CHUNK);
+        if(n == 0) break;
+        if(!speech_pcm_push_raw(
+               &speech->pcm, speech->file_buffer, n, SPEECH_VOICE_HOLD_NS, speech_emit, speech)) {
+            break;
+        }
+    }
+    storage_file_close(file);
+    return true;
+}
+
+/** A word the vocabulary lacks: SAM speaks it, upper cased with a closing period. */
+static void speech_sam_word(Speech* speech, const char* word, const SamVoice* voice) {
+    size_t len = strlen(word);
+    if(len > sizeof(speech->chunk) - 3) len = sizeof(speech->chunk) - 3;
+    for(size_t i = 0; i < len; i++) {
+        char c = word[i];
+        speech->chunk[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+    }
+    speech->chunk[len] = '.';
+    speech->chunk[len + 1] = '\0';
+    len++;
+    size_t offset = 0;
+    while(offset < len && !speech->aborted) {
+        size_t consumed = 0;
+        sam_speak(speech->chunk + offset, voice, speech_sam_output, speech, &consumed);
+        if(consumed == 0) break;
+        offset += consumed;
+    }
+}
+
+/** The expanded text word by word: a clip when the card has it, SAM when not, then the pause. */
+static void speech_speak_words(Speech* speech, const SamVoice* voice) {
+    size_t pos = 0;
+    SpeechVoiceWord word;
+    while(!speech->aborted && speech_voice_next_word(speech->expanded, &pos, &word)) {
+        if(word.word[0] != '\0') {
+            if(speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
+               speech_play_clip(speech, speech->path)) {
+                speech->voice.clip_words++;
+            } else {
+                speech->voice.fallback_words++;
+                speech_voice_missing(&speech->voice, word.word);
+                speech_sam_word(speech, word.word, voice);
+            }
+        }
+        if(speech->aborted) break;
+        if(!speech_push_silence(speech, word.pause_ms)) break;
+    }
+}
+
+/** Append the words the last utterance lacked to the missing list on the card. */
+static void speech_write_missing(Speech* speech) {
+    size_t n = speech_voice_log_count(&speech->voice);
+    if(n == 0) return;
+    File* file = speech->voice_file;
+    if(storage_file_open(file, SPEECH_VOICE_MISSING_PATH, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+        for(size_t i = 0; i < n; i++) {
+            const char* w = speech_voice_log_word(&speech->voice, i);
+            storage_file_write(file, w, strlen(w));
+            storage_file_write(file, "\n", 1);
+        }
+    }
+    storage_file_close(file);
+    speech_voice_log_clear(&speech->voice);
+}
+
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     if(!speech_item_begin(speech, item)) return;
 
@@ -279,6 +406,13 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     SamVoice voice = SAM_VOICE_DEFAULT;
     voice.speed = speech->rate;
     speech->started = furi_get_tick();
+
+    if(speech->voice_enabled && speech_voice_ready(speech)) {
+        speech_speak_words(speech, &voice);
+        speech_item_end(speech);
+        speech_write_missing(speech);
+        return;
+    }
 
     size_t pos = 0;
     while(!speech->aborted &&
@@ -396,6 +530,9 @@ Speech* speech_alloc(void) {
     speech_pcm_init(&speech->pcm, 100, SPEECH_OVERHEAD_NS);
     speech->storage = furi_record_open(RECORD_STORAGE);
     speech->file_buffer = malloc(SPEECH_FILE_CHUNK);
+    speech->voice_file = storage_file_alloc(speech->storage);
+    speech_voice_state_init(&speech->voice);
+    speech->voice_enabled = true;
 
     speech->thread = furi_thread_alloc_ex("SpeechWorker", 3 * 1024, speech_worker, speech);
     furi_thread_set_priority(speech->thread, FuriThreadPriorityHigh);
@@ -460,4 +597,22 @@ void speech_get_stats(Speech* speech, SpeechStats* out) {
     out->queued = speech_queue_count(&speech->queue);
     speech_unlock(speech);
     out->stack_free = furi_thread_get_stack_space(speech->thread_id);
+}
+
+void speech_set_voice_clips(Speech* speech, bool enabled) {
+    furi_check(speech);
+    speech->voice_enabled = enabled;
+}
+
+void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
+    furi_check(speech && out);
+    // The worker owns these counters and writes them one word at a time; 32 bit reads are
+    // atomic on this core, so the snapshot is consistent enough for a status line
+    out->enabled = speech->voice_enabled;
+    out->vocabulary = speech->vocabulary;
+    out->clip_words = *(volatile uint32_t*)&speech->voice.clip_words;
+    out->fallback_words = *(volatile uint32_t*)&speech->voice.fallback_words;
+    out->missing_words = *(volatile uint32_t*)&speech->voice.missing_words;
+    strncpy(out->settings, speech->voice_settings, sizeof(out->settings) - 1);
+    out->settings[sizeof(out->settings) - 1] = '\0';
 }

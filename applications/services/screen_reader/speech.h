@@ -51,6 +51,20 @@ void speech_stop(Speech* speech);
 /** rate is the SAM speed (40..120), volume 0..100. Applied from the next utterance on. */
 void speech_set_voice(Speech* speech, uint8_t rate, uint8_t volume);
 
+typedef struct {
+    bool enabled; /**< recorded clips are used when the vocabulary is present */
+    bool vocabulary; /**< /ext/sr/voice was found on the card */
+    uint32_t clip_words; /**< words spoken from clips since boot */
+    uint32_t fallback_words; /**< words spoken by SAM since boot */
+    uint32_t missing_words; /**< distinct words recorded in /ext/sr/missing.txt since boot */
+    char settings[64]; /**< first line of /ext/sr/voice/voice.txt, empty when absent */
+} SpeechVoiceStats;
+
+/** Recorded voice on or off, from the next utterance on; off means SAM speaks everything. */
+void speech_set_voice_clips(Speech* speech, bool enabled);
+
+void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
+
 /** True while something is queued or being spoken. */
 bool speech_is_busy(Speech* speech);
 
