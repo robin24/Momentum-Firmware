@@ -61,29 +61,29 @@ static int TextToPhonemes(unsigned char* input); // Code36484
 //
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-char input[256 + 1] = {0}; //tab39445
+static char input[256 + 1] = {0}; //tab39445
 //standard sam sound
 
-unsigned char wait1 = 7;
-unsigned char wait2 = 6;
+static unsigned char wait1 = 7;
+static unsigned char wait2 = 6;
 
-unsigned char A, X, Y;
-unsigned char mem44;
-unsigned char mem47;
-unsigned char mem49;
-unsigned char mem39;
-unsigned char mem50;
-unsigned char mem51;
-unsigned char mem53;
-unsigned char mem56;
-unsigned char mem59 = 0;
+static unsigned char A, X, Y;
+static unsigned char mem44;
+static unsigned char mem47;
+static unsigned char mem49;
+static unsigned char mem39;
+static unsigned char mem50;
+static unsigned char mem51;
+static unsigned char mem53;
+static unsigned char mem56;
+static unsigned char mem59 = 0;
 
-unsigned char phonemeIndexOutput[60]; //tab47296
-unsigned char stressOutput[60]; //tab47365
-unsigned char phonemeLengthOutput[60]; //tab47416
+static unsigned char phonemeIndexOutput[60]; //tab47296
+static unsigned char stressOutput[60]; //tab47365
+static unsigned char phonemeLengthOutput[60]; //tab47416
 
 // contains the soundbuffer position
-int bufferpos;
+static int bufferpos;
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -92,10 +92,10 @@ int bufferpos;
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 //tab40672
-const unsigned char stressInputTable[] = {'*', '1', '2', '3', '4', '5', '6', '7', '8'};
+static const unsigned char stressInputTable[] = {'*', '1', '2', '3', '4', '5', '6', '7', '8'};
 
 //tab40682
-const unsigned char signInputTable1[] = {
+static const unsigned char signInputTable1[] = {
     ' ', '.', '?', ',', '-', 'I', 'I', 'E', 'A', 'A', 'A', 'A', 'U', 'A', 'I', 'E', 'U',
     'O', 'R', 'L', 'W', 'Y', 'W', 'R', 'L', 'W', 'Y', 'M', 'N', 'N', 'D', 'Q', 'S', 'S',
     'F', 'T', '/', '/', 'Z', 'Z', 'V', 'D', 'C', '*', 'J', '*', '*', '*', 'E', 'A', 'O',
@@ -103,7 +103,7 @@ const unsigned char signInputTable1[] = {
     '*', 'T', '*', '*', 'K', '*', '*', 'K', '*', '*', 'U', 'U', 'U'};
 
 //tab40763
-const unsigned char signInputTable2[] = {
+static const unsigned char signInputTable2[] = {
     '*', '*', '*', '*', '*', 'Y', 'H', 'H', 'E', 'A', 'H', 'O', 'H', 'X', 'X', 'R', 'X',
     'H', 'X', 'X', 'X', 'X', 'H', '*', '*', '*', '*', '*', '*', 'X', 'X', '*', '*', 'H',
     '*', 'H', 'H', 'X', '*', 'H', '*', 'H', 'H', '*', '*', '*', '*', '*', 'Y', 'Y', 'Y',
@@ -111,7 +111,7 @@ const unsigned char signInputTable2[] = {
     '*', '*', '*', '*', '*', '*', '*', 'X', '*', '*', 'L', 'M', 'N'};
 
 //loc_9F8C
-const unsigned char flags[] = {
+static const unsigned char flags[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0xA4, 0xA4, 0xA4, 0xA4, 0xA4, 0xA4, 0x84, 0x84, 0xA4,
     0xA4, 0x84, 0x84, 0x84, 0x84, 0x84, 0x84, 0x84, 0x44, 0x44, 0x44, 0x44, 0x44, 0x4C,
     0x4C, 0x4C, 0x48, 0x4C, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x44, 0x44, 0x44, 0x44,
@@ -123,7 +123,7 @@ const unsigned char flags[] = {
 
 //??? flags overlap flags2
 //loc_9FDA
-const unsigned char flags2[] = {
+static const unsigned char flags2[] = {
     0x80, 0xC1, 0xC1, 0xC1, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x10, 0x10, 0x10, 0x08, 0x0C, 0x08, 0x04, 0x40,
     0x24, 0x20, 0x20, 0x24, 0x00, 0x00, 0x24, 0x20, 0x20, 0x24, 0x20, 0x20, 0x00, 0x20, 0x00, 0x00,
@@ -131,7 +131,7 @@ const unsigned char flags2[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 //tab45616???
-const unsigned char phonemeStressedLengthTable[] = {
+static const unsigned char phonemeStressedLengthTable[] = {
     0x00, 0x12, 0x12, 0x12, 8,   0xB, 9,   0xB, 0xE, 0xF, 0xB, 0x10, 0xC, 6, 6, 0xE,
     0xC,  0xE,  0xC,  0xB,  8,   8,   0xB, 0xA, 9,   8,   8,   8,    8,   8, 3, 5,
     2,    2,    2,    2,    2,   2,   6,   6,   8,   6,   6,   2,    9,   4, 2, 1,
@@ -139,7 +139,7 @@ const unsigned char phonemeStressedLengthTable[] = {
     2,    2,    8,    2,    2,   6,   2,   2,   7,   2,   4,   7,    1,   4, 5, 5};
 
 //tab45536???
-const unsigned char phonemeLengthTable[] = {
+static const unsigned char phonemeLengthTable[] = {
     0, 0x12, 0x12, 0x12, 8, 8, 8, 8,    8,   0xB, 6,   0xC, 0xA, 5, 5, 0xB, 0xA, 0xA, 0xA,  9,
     8, 7,    9,    7,    6, 8, 6, 7,    7,   7,   2,   5,   2,   2, 2, 2,   2,   2,   6,    6,
     7, 6,    6,    2,    8, 3, 1, 0x1E, 0xD, 0xC, 0xC, 0xC, 0xE, 9, 6, 1,   2,   5,   1,    1,
@@ -258,11 +258,11 @@ const unsigned char phonemeLengthTable[] = {
 //
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-const unsigned char tab48426[5] = {0x18, 0x1A, 0x17, 0x17, 0x17};
+static const unsigned char tab48426[5] = {0x18, 0x1A, 0x17, 0x17, 0x17};
 
-const unsigned char tab47492[] = {0, 0, 0xE0, 0xE6, 0xEC, 0xF3, 0xF9, 0, 6, 0xC, 6};
+static const unsigned char tab47492[] = {0, 0, 0xE0, 0xE6, 0xEC, 0xF3, 0xF9, 0, 6, 0xC, 6};
 
-const unsigned char amplitudeRescale[] = {
+static const unsigned char amplitudeRescale[] = {
     0,
     1,
     2,
@@ -284,30 +284,27 @@ const unsigned char amplitudeRescale[] = {
 
 // Used to decide which phoneme's blend lengths. The candidate with the lower score is selected.
 // tab45856
-const unsigned char blendRank[] = {0,    0x1F, 0x1F, 0x1F, 0x1F, 2,    2,    2,    2,    2,
-                                   2,    2,    2,    2,    5,    5,    2,    0xA,  2,    8,
-                                   5,    5,    0xB,  0xA,  9,    8,    8,    0xA0, 8,    8,
-                                   0x17, 0x1F, 0x12, 0x12, 0x12, 0x12, 0x1E, 0x1E, 0x14, 0x14,
-                                   0x14, 0x14, 0x17, 0x17, 0x1A, 0x1A, 0x1D, 0x1D, 2,    2,
-                                   2,    2,    2,    2,    0x1A, 0x1D, 0x1B, 0x1A, 0x1D, 0x1B,
-                                   0x1A, 0x1D, 0x1B, 0x1A, 0x1D, 0x1B, 0x17, 0x1D, 0x17, 0x17,
-                                   0x1D, 0x17, 0x17, 0x1D, 0x17, 0x17, 0x1D, 0x17, 0x17, 0x17};
+static const unsigned char blendRank[] = {
+    0,    0x1F, 0x1F, 0x1F, 0x1F, 2,    2,    2,    2,    2,    2,    2,    2,    2,
+    5,    5,    2,    0xA,  2,    8,    5,    5,    0xB,  0xA,  9,    8,    8,    0xA0,
+    8,    8,    0x17, 0x1F, 0x12, 0x12, 0x12, 0x12, 0x1E, 0x1E, 0x14, 0x14, 0x14, 0x14,
+    0x17, 0x17, 0x1A, 0x1A, 0x1D, 0x1D, 2,    2,    2,    2,    2,    2,    0x1A, 0x1D,
+    0x1B, 0x1A, 0x1D, 0x1B, 0x1A, 0x1D, 0x1B, 0x1A, 0x1D, 0x1B, 0x17, 0x1D, 0x17, 0x17,
+    0x1D, 0x17, 0x17, 0x1D, 0x17, 0x17, 0x1D, 0x17, 0x17, 0x17};
 
 // Number of frames at the end of a phoneme devoted to interpolating to next phoneme's final value
 //tab45696
-const unsigned char outBlendLength[] = {0, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,    4,
-                                        4, 4, 3, 2, 4, 4, 2, 2, 2, 2, 2, 1, 1, 1, 1,    1,
-                                        1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 1, 0, 1, 0,    5,
-                                        5, 5, 5, 5, 4, 4, 2, 0, 1, 2, 0, 1, 2, 0, 1,    2,
-                                        0, 1, 2, 0, 2, 2, 0, 1, 3, 0, 2, 3, 0, 2, 0xA0, 0xA0};
+static const unsigned char outBlendLength[] = {
+    0, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 2, 4, 4, 2, 2, 2,    2,   2,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 0, 1, 0, 1, 0, 5, 5, 5, 5, 5,    4,   4,
+    2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 2, 2, 0, 1, 3, 0, 2, 3, 0, 2, 0xA0, 0xA0};
 
 // Number of frames at beginning of a phoneme devoted to interpolating to phoneme's final value
 // tab45776
-const unsigned char inBlendLength[] = {0, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,    4,
-                                       4, 4, 3, 3, 4, 4, 3, 3, 3, 3, 3, 1, 2, 3, 2,    1,
-                                       3, 3, 3, 3, 1, 1, 3, 3, 3, 2, 2, 3, 2, 3, 0,    0,
-                                       5, 5, 5, 5, 4, 4, 2, 0, 2, 2, 0, 3, 2, 0, 4,    2,
-                                       0, 3, 2, 0, 2, 2, 0, 2, 3, 0, 3, 3, 0, 3, 0xB0, 0xA0};
+static const unsigned char inBlendLength[] = {
+    0, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 4, 4, 3, 3, 3,    3,   3,
+    1, 2, 3, 2, 1, 3, 3, 3, 3, 1, 1, 3, 3, 3, 2, 2, 3, 2, 3, 0, 0, 5, 5, 5, 5,    4,   4,
+    2, 0, 2, 2, 0, 3, 2, 0, 4, 2, 0, 3, 2, 0, 2, 2, 0, 2, 3, 0, 3, 3, 0, 3, 0xB0, 0xA0};
 
 // Looks like it's used as bit flags
 // High bits masked by 248 (11111000)
@@ -327,14 +324,14 @@ const unsigned char inBlendLength[] = {0, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4,
 // 67: **    27          00011011
 // 70: **    25          00011001
 // tab45936
-const unsigned char sampledConsonantFlags[] = {
+static const unsigned char sampledConsonantFlags[] = {
     0, 0, 0, 0,    0, 0, 0, 0,    0, 0, 0,    0, 0,    0,    0,    0,    0,    0,    0, 0,
     0, 0, 0, 0,    0, 0, 0, 0,    0, 0, 0,    0, 0xF1, 0xE2, 0xD3, 0xBB, 0x7C, 0x95, 1, 2,
     3, 3, 0, 0x72, 0, 2, 0, 0,    0, 0, 0,    0, 0,    0,    0,    0,    0,    0,    0, 0,
     0, 0, 0, 0,    0, 0, 0, 0x1B, 0, 0, 0x19, 0, 0,    0,    0,    0,    0,    0,    0, 0};
 
 //tab45056
-unsigned char freq1data[] = {
+static unsigned char freq1data[] = {
     0x00, 0x13, 0x13, 0x13, 0x13, 0xA,  0xE, 0x12, 0x18, 0x1A, 0x16, 0x14, 0x10, 0x14, 0xE,  0x12,
     0xE,  0x12, 0x12, 0x10, 0xC,  0xE,  0xA, 0x12, 0xE,  0xA,  8,    6,    6,    6,    6,    0x11,
     6,    6,    6,    6,    0xE,  0x10, 9,   0xA,  8,    0xA,  6,    6,    6,    5,    6,    0,
@@ -342,23 +339,23 @@ unsigned char freq1data[] = {
     6,    6,    6,    6,    6,    6,    6,   6,    6,    0xA,  0xA,  6,    6,    6,    0x2C, 0x13};
 
 //tab451356
-unsigned char freq2data[] = {0x00, 0x43, 0x43, 0x43, 0x43, 0x54, 0x48, 0x42, 0x3E, 0x28,
-                             0x2C, 0x1E, 0x24, 0x2C, 0x48, 0x30, 0x24, 0x1E, 0x32, 0x24,
-                             0x1C, 0x44, 0x18, 0x32, 0x1E, 0x18, 0x52, 0x2E, 0x36, 0x56,
-                             0x36, 0x43, 0x49, 0x4F, 0x1A, 0x42, 0x49, 0x25, 0x33, 0x42,
-                             0x28, 0x2F, 0x4F, 0x4F, 0x42, 0x4F, 0x6E, 0x00, 0x48, 0x26,
-                             0x1E, 0x2A, 0x1E, 0x22, 0x1A, 0x1A, 0x1A, 0x42, 0x42, 0x42,
-                             0x6E, 0x6E, 0x6E, 0x54, 0x54, 0x54, 0x1A, 0x1A, 0x1A, 0x42,
-                             0x42, 0x42, 0x6D, 0x56, 0x6D, 0x54, 0x54, 0x54, 0x7F, 0x7F};
+static unsigned char freq2data[] = {0x00, 0x43, 0x43, 0x43, 0x43, 0x54, 0x48, 0x42, 0x3E, 0x28,
+                                    0x2C, 0x1E, 0x24, 0x2C, 0x48, 0x30, 0x24, 0x1E, 0x32, 0x24,
+                                    0x1C, 0x44, 0x18, 0x32, 0x1E, 0x18, 0x52, 0x2E, 0x36, 0x56,
+                                    0x36, 0x43, 0x49, 0x4F, 0x1A, 0x42, 0x49, 0x25, 0x33, 0x42,
+                                    0x28, 0x2F, 0x4F, 0x4F, 0x42, 0x4F, 0x6E, 0x00, 0x48, 0x26,
+                                    0x1E, 0x2A, 0x1E, 0x22, 0x1A, 0x1A, 0x1A, 0x42, 0x42, 0x42,
+                                    0x6E, 0x6E, 0x6E, 0x54, 0x54, 0x54, 0x1A, 0x1A, 0x1A, 0x42,
+                                    0x42, 0x42, 0x6D, 0x56, 0x6D, 0x54, 0x54, 0x54, 0x7F, 0x7F};
 //tab45216
-unsigned char freq3data[] = {0x00, 0x5B, 0x5B, 0x5B, 0x5B, 0x6E, 0x5D, 0x5B, 0x58, 0x59,
-                             0x57, 0x58, 0x52, 0x59, 0x5D, 0x3E, 0x52, 0x58, 0x3E, 0x6E,
-                             0x50, 0x5D, 0x5A, 0x3C, 0x6E, 0x5A, 0x6E, 0x51, 0x79, 0x65,
-                             0x79, 0x5B, 0x63, 0x6A, 0x51, 0x79, 0x5D, 0x52, 0x5D, 0x67,
-                             0x4C, 0x5D, 0x65, 0x65, 0x79, 0x65, 0x79, 0x00, 0x5A, 0x58,
-                             0x58, 0x58, 0x58, 0x52, 0x51, 0x51, 0x51, 0x79, 0x79, 0x79,
-                             0x70, 0x6E, 0x6E, 0x5E, 0x5E, 0x5E, 0x51, 0x51, 0x51, 0x79,
-                             0x79, 0x79, 0x65, 0x65, 0x70, 0x5E, 0x5E, 0x5E, 0x08, 0x01};
+static unsigned char freq3data[] = {0x00, 0x5B, 0x5B, 0x5B, 0x5B, 0x6E, 0x5D, 0x5B, 0x58, 0x59,
+                                    0x57, 0x58, 0x52, 0x59, 0x5D, 0x3E, 0x52, 0x58, 0x3E, 0x6E,
+                                    0x50, 0x5D, 0x5A, 0x3C, 0x6E, 0x5A, 0x6E, 0x51, 0x79, 0x65,
+                                    0x79, 0x5B, 0x63, 0x6A, 0x51, 0x79, 0x5D, 0x52, 0x5D, 0x67,
+                                    0x4C, 0x5D, 0x65, 0x65, 0x79, 0x65, 0x79, 0x00, 0x5A, 0x58,
+                                    0x58, 0x58, 0x58, 0x52, 0x51, 0x51, 0x51, 0x79, 0x79, 0x79,
+                                    0x70, 0x6E, 0x6E, 0x5E, 0x5E, 0x5E, 0x51, 0x51, 0x51, 0x79,
+                                    0x79, 0x79, 0x65, 0x65, 0x70, 0x5E, 0x5E, 0x5E, 0x08, 0x01};
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -366,7 +363,7 @@ unsigned char freq3data[] = {0x00, 0x5B, 0x5B, 0x5B, 0x5B, 0x6E, 0x5D, 0x5B, 0x5
 //
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-unsigned char inputtemp[256]; // secure copy of input tab36096
+static unsigned char inputtemp[256]; // secure copy of input tab36096
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -375,37 +372,36 @@ unsigned char inputtemp[256]; // secure copy of input tab36096
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 //timetable for more accurate c64 simulation
-int timetable[5][5] = {
+static int timetable[5][5] = {
     {162, 167, 167, 127, 128},
     {226, 60, 60, 0, 0},
     {225, 60, 59, 0, 0},
     {200, 0, 0, 54, 55},
     {199, 0, 0, 54, 54}};
 
-unsigned oldtimetableindex;
+static unsigned oldtimetableindex;
 
-const unsigned char ampl1data[] = {0,   0,   0,   0,   0,   0xD, 0xD, 0xE, 0xF, 0xF, 0xF, 0xF,
-                                   0xF, 0xC, 0xD, 0xC, 0xF, 0xF, 0xD, 0xD, 0xD, 0xE, 0xD, 0xC,
-                                   0xD, 0xD, 0xD, 0xC, 9,   9,   0,   0,   0,   0,   0,   0,
-                                   0,   0,   0xB, 0xB, 0xB, 0xB, 0,   0,   1,   0xB, 0,   2,
-                                   0xE, 0xF, 0xF, 0xF, 0xF, 0xD, 2,   4,   0,   2,   4,   0,
-                                   1,   4,   0,   1,   4,   0,   0,   0,   0,   0,   0,   0,
-                                   0,   0xC, 0,   0,   0,   0,   0xF, 0xF};
+static const unsigned char ampl1data[] = {
+    0,   0,   0,   0,   0,   0xD, 0xD, 0xE, 0xF, 0xF, 0xF, 0xF, 0xF, 0xC, 0xD, 0xC,
+    0xF, 0xF, 0xD, 0xD, 0xD, 0xE, 0xD, 0xC, 0xD, 0xD, 0xD, 0xC, 9,   9,   0,   0,
+    0,   0,   0,   0,   0,   0,   0xB, 0xB, 0xB, 0xB, 0,   0,   1,   0xB, 0,   2,
+    0xE, 0xF, 0xF, 0xF, 0xF, 0xD, 2,   4,   0,   2,   4,   0,   1,   4,   0,   1,
+    4,   0,   0,   0,   0,   0,   0,   0,   0,   0xC, 0,   0,   0,   0,   0xF, 0xF};
 
-const unsigned char ampl2data[] = {
+static const unsigned char ampl2data[] = {
     0, 0,   0, 0,   0, 0xA, 0xB, 0xD, 0xE, 0xD, 0xC, 0xC, 0xB, 9,   0xB, 0xB, 0xC, 0xC, 0xC, 8,
     8, 0xC, 8, 0xA, 8, 8,   0xA, 3,   9,   6,   0,   0,   0,   0,   0,   0,   0,   0,   3,   5,
     3, 4,   0, 0,   0, 5,   0xA, 2,   0xE, 0xD, 0xC, 0xD, 0xC, 8,   0,   1,   0,   0,   1,   0,
     0, 1,   0, 0,   1, 0,   0,   0,   0,   0,   0,   0,   0,   0xA, 0,   0,   0xA, 0,   0,   0};
 
-const unsigned char ampl3data[] = {0, 0, 0, 0, 0, 8, 7, 8, 8, 1, 1, 0, 1, 0, 7,    5,
-                                   1, 0, 6, 1, 0, 7, 0, 5, 1, 0, 8, 0, 0, 3, 0,    0,
-                                   0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0xE,  1,
-                                   9, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    0,
-                                   0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 5, 0, 0x13, 0x10};
+static const unsigned char ampl3data[] = {0, 0, 0, 0, 0, 8, 7, 8, 8, 1, 1, 0, 1, 0, 7,    5,
+                                          1, 0, 6, 1, 0, 7, 0, 5, 1, 0, 8, 0, 0, 3, 0,    0,
+                                          0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0xE,  1,
+                                          9, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,    0,
+                                          0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 5, 0, 0x13, 0x10};
 
 //tab42240
-const signed char sinus[256] = {
+static const signed char sinus[256] = {
     0,    3,    6,    9,    12,   16,   19,   22,   25,   28,   31,   34,   37,   40,   43,   46,
     49,   51,   54,   57,   60,   63,   65,   68,   71,   73,   76,   78,   81,   83,   85,   88,
     90,   92,   94,   96,   98,   100,  102,  104,  106,  107,  109,  111,  112,  113,  115,  116,
@@ -424,7 +420,7 @@ const signed char sinus[256] = {
     -49,  -46,  -43,  -40,  -37,  -34,  -31,  -28,  -25,  -22,  -19,  -16,  -12,  -9,   -6,   -3};
 
 //tab42496
-const unsigned char rectangle[] = {
+static const unsigned char rectangle[] = {
     0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
     0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
     0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
@@ -445,7 +441,7 @@ const unsigned char rectangle[] = {
     0x70};
 
 //random data ?
-const unsigned char sampleTable[0x500] = {
+static const unsigned char sampleTable[0x500] = {
     //00
 
     0x38,
@@ -1813,17 +1809,17 @@ const unsigned char sampleTable[0x500] = {
 //
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-unsigned char pitches[256]; // tab43008
+static unsigned char pitches[256]; // tab43008
 
-unsigned char frequency1[256];
-unsigned char frequency2[256];
-unsigned char frequency3[256];
+static unsigned char frequency1[256];
+static unsigned char frequency2[256];
+static unsigned char frequency3[256];
 
-unsigned char amplitude1[256];
-unsigned char amplitude2[256];
-unsigned char amplitude3[256];
+static unsigned char amplitude1[256];
+static unsigned char amplitude2[256];
+static unsigned char amplitude3[256];
 
-unsigned char sampledConsonantFlag[256]; // tab44800
+static unsigned char sampledConsonantFlag[256]; // tab44800
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -1831,9 +1827,9 @@ unsigned char sampledConsonantFlag[256]; // tab44800
 //
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-unsigned char stress[256]; //numbers from 0 to 8
-unsigned char phonemeLength[256]; //tab40160
-unsigned char phonemeindex[256];
+static unsigned char stress[256]; //numbers from 0 to 8
+static unsigned char phonemeLength[256]; //tab40160
+static unsigned char phonemeindex[256];
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -1842,7 +1838,7 @@ unsigned char phonemeindex[256];
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 //some flags
-const unsigned char tab36376[] = {
+static const unsigned char tab36376[] = {
     0,   0,   0,   0,   0,   0,   0,   0, // 0-7
     0,   0,   0,   0,   0,   0,   0,   0, // 8-15
     0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
@@ -1853,7 +1849,7 @@ const unsigned char tab36376[] = {
     176, 192, 188, 0,   0,   0,   2,   0, // 'X', 'Y', 'Z', '[',
     32,  32,  155, 32,  192, 185, 32,  205, 163, 76,  138, 142};
 
-const unsigned char rules[] = {
+static const unsigned char rules[] = {
     ']',        'A' | 0x80, ' ',        '(',        'A',        '.',        ')',        '=',
     'E',        'H',        '4',        'Y',        '.',        ' ' | 0x80, '(',        'A',
     ')',        ' ',        '=',        'A',        'H' | 0x80, ' ',        '(',        'A',
@@ -2400,7 +2396,7 @@ const unsigned char rules[] = {
     'Z',        'I',        'Y',        '4' | 0x80, '(',        'Z',        ')',        '=',
     'Z' | 0x80, 'j' | 0x80};
 
-const unsigned char rules2[] = {
+static const unsigned char rules2[] = {
     '(',        'A',        ')',        '=' | 0x80, '(',        '!',        ')',        '=',
     '.' | 0x80, '(',        '"',        ')',        ' ',        '=',        '-',        'A',
     'H',        '5',        'N',        'K',        'W',        'O',        'W',        'T',
@@ -2460,11 +2456,13 @@ const unsigned char rules2[] = {
 
 //26 items. From 'A' to 'Z'
 // positions for mem62 and mem63 for each character
-const unsigned char tab37489[] = {0,   149, 247, 162, 57, 197, 6,  126, 199, 38, 55, 78, 145,
-                                  241, 85,  161, 254, 36, 69,  45, 167, 54,  83, 46, 71, 218};
+static const unsigned char tab37489[] = {0,  149, 247, 162, 57,  197, 6,   126, 199,
+                                         38, 55,  78,  145, 241, 85,  161, 254, 36,
+                                         69, 45,  167, 54,  83,  46,  71,  218};
 
-const unsigned char tab37515[] = {125, 126, 126, 127, 128, 129, 130, 130, 130, 132, 132, 132, 132,
-                                  132, 133, 135, 135, 136, 136, 137, 138, 139, 139, 140, 140, 140};
+static const unsigned char tab37515[] = {125, 126, 126, 127, 128, 129, 130, 130, 130,
+                                         132, 132, 132, 132, 132, 133, 135, 135, 136,
+                                         136, 137, 138, 139, 139, 140, 140, 140};
 
 static void Output8BitAry(int index, unsigned char ary[5]) {
     int bufferposOld = bufferpos;
@@ -5278,7 +5276,7 @@ pos37485:
     goto pos37461;
 }
 
-char to_upper_case(char c) {
+static char to_upper_case(char c) {
     if(c >= 'a' && c <= 'z') {
         return c - 'a' + 'A';
     }
