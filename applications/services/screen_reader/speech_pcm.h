@@ -6,6 +6,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -44,6 +45,20 @@ bool speech_pcm_push(
     SpeechPcm* pcm,
     const uint8_t values[5],
     uint16_t delta,
+    SpeechPcmEmit emit,
+    void* context);
+
+/** Feed `count` recorded samples, each held for exactly hold_ns (no overhead), through the
+ *  same slot accumulator and loudness table: one duty byte per slot boundary crossed.
+ *  subsamples grows by every sample entered and nominal_us by the exact time of the samples
+ *  completed, with a sub microsecond remainder carried from call to call. Returns false when
+ *  emit asked to stop; the stage then sits inside the refused sample, so call speech_pcm_reset
+ *  before pushing again. */
+bool speech_pcm_push_raw(
+    SpeechPcm* pcm,
+    const uint8_t* samples,
+    size_t count,
+    uint32_t hold_ns,
     SpeechPcmEmit emit,
     void* context);
 

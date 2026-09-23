@@ -37,6 +37,12 @@ Speech* speech_alloc(void);
  *  replaceable item is overwritten instead of queued behind it. */
 void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable);
 
+/** Play a file of raw unsigned 8 bit mono samples (128 is silence) from the card in place of
+ *  speech: what is being said stops, what waits is dropped, and the file plays through the
+ *  same ring, speaker and stop rules. rate is in samples per second, 8000 to 32000 (values
+ *  outside are clamped); each sample is held for 1000000000 / rate nanoseconds. */
+void speech_play(Speech* speech, const char* path, uint32_t rate);
+
 /** Stop speaking and drop what is queued so far; anything pushed afterwards is kept. Takes the
  *  speech mutex briefly, so callers are threads (input callbacks run on the input service
  *  thread), never interrupts. */

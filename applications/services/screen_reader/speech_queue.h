@@ -19,6 +19,8 @@ extern "C" {
 typedef struct {
     uint32_t generation; /**< generation the item was queued in */
     bool replaceable; /**< a later replaceable item may overwrite it while it waits */
+    bool file; /**< text is the path of a raw sample file to play instead of words */
+    uint32_t rate; /**< samples per second of a file item, 0 for words */
     char text[SPEECH_ITEM_TEXT_MAX];
 } SpeechItem;
 
@@ -36,6 +38,10 @@ void speech_queue_init(SpeechQueue* queue);
 /** interrupt: clear everything and start a new generation before adding. replaceable: overwrite a
  *  replaceable item at the tail instead of appending. A full queue drops its oldest item. */
 void speech_queue_push(SpeechQueue* queue, const char* text, bool interrupt, bool replaceable);
+
+/** Queue a file to play: like an interrupting, non replaceable push (everything cleared, a new
+ *  generation), with file true, the path in text and the sample rate in rate. */
+void speech_queue_push_file(SpeechQueue* queue, const char* path, uint32_t rate);
 
 bool speech_queue_pop(SpeechQueue* queue, SpeechItem* out);
 

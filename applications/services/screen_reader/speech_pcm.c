@@ -63,3 +63,32 @@ bool speech_pcm_push(
     }
     return true;
 }
+
+bool speech_pcm_push_raw(
+    SpeechPcm* pcm,
+    const uint8_t* samples,
+    size_t count,
+    uint32_t hold_ns,
+    SpeechPcmEmit emit,
+    void* context) {
+    uint64_t start_ns = pcm->now_ns;
+    bool accepted = true;
+    for(size_t i = 0; i < count && accepted; i++) {
+        pcm->subsamples++;
+        uint64_t end_ns = pcm->now_ns + hold_ns;
+        while(pcm->next_slot_ns < end_ns) {
+            if(!emit(pcm->lut[samples[i]], context)) {
+                accepted = false;
+                break;
+            }
+            pcm->slots++;
+            pcm->next_slot_ns += SPEECH_SLOT_NS;
+        }
+        if(accepted) pcm->now_ns = end_ns;
+    }
+    // The nominal time is the exact total of the completed samples: the difference of the
+    // microsecond floors before and after carries a sub microsecond remainder across calls, so
+    // the 62.5 us samples of a 16 kHz clip add up to a whole second and not to 992 ms
+    pcm->nominal_us += (uint32_t)(pcm->now_ns / 1000u - start_ns / 1000u);
+    return accepted;
+}

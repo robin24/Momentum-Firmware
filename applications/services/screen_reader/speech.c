@@ -7,6 +7,7 @@
 #include "speech_text.h"
 
 #include <furi_hal.h>
+#include <storage/storage.h>
 
 #define TAG "Speech"
 
@@ -17,6 +18,9 @@
 #define SPEECH_ACQUIRE_TIMEOUT_MS 500
 #define SPEECH_EVENT_TIMEOUT_MS   200
 #define SPEECH_BUS_POLL_MS        5
+#define SPEECH_FILE_CHUNK         512 /* bytes read from the card at a time */
+#define SPEECH_FILE_RATE_MIN      8000
+#define SPEECH_FILE_RATE_MAX      32000
 
 #define SPEECH_FLAG_WORK  (1 << 0)
 #define SPEECH_FLAG_STOP  (1 << 1)
@@ -27,6 +31,8 @@ struct Speech {
     FuriThread* thread;
     volatile FuriThreadId thread_id;
     FuriMutex* mutex;
+    Storage* storage;
+    uint8_t* file_buffer; /* SPEECH_FILE_CHUNK bytes, worker thread only */
 
     // Guarded by mutex
     SpeechQueue queue;
@@ -44,6 +50,7 @@ struct Speech {
     bool running;
     bool aborted;
     uint32_t generation;
+    uint32_t started; /* tick at which the rendering of the current item began */
     uint8_t lut_volume;
     char expanded[SPEECH_TEXT_MAX];
     char chunk[SPEECH_CHUNK_MAX + 2]; /* room for an appended period */
@@ -207,7 +214,12 @@ static void speech_drop_speaker(Speech* speech) {
     speech_unlock(speech);
 }
 
-static void speech_speak_item(Speech* speech, const SpeechItem* item) {
+/**
+ * Common start of an item, spoken or played: take the speaker, refresh the loudness table,
+ * reset the PCM stage and the ring, count the utterance. False when the speaker could not be
+ * taken; the item is then counted as aborted or dropped and nothing plays.
+ */
+static bool speech_item_begin(Speech* speech, const SpeechItem* item) {
     speech->generation = item->generation;
     speech->aborted = false;
     speech->fill_half = 0;
@@ -223,7 +235,7 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
         }
         speech->stats.speaking = false;
         speech_unlock(speech);
-        return;
+        return false;
     }
 
     uint8_t volume = speech->volume;
@@ -234,14 +246,39 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     speech_pcm_reset(&speech->pcm);
     memset(speech->ring, speech_pcm_silence(&speech->pcm), SPEECH_RING_SIZE);
 
-    speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
-    SamVoice voice = SAM_VOICE_DEFAULT;
-    voice.speed = speech->rate;
-
     speech_lock(speech);
     speech->stats.utterances++;
     speech_unlock(speech);
-    uint32_t started = furi_get_tick();
+    return true;
+}
+
+/** Common end of an item: play out what was rendered or stop at once, then record the timing. */
+static void speech_item_end(Speech* speech) {
+    if(speech->aborted) {
+        if(speech->running) {
+            speech_hw_stop();
+            speech->running = false;
+        }
+    } else {
+        speech_flush(speech);
+    }
+
+    speech_lock(speech);
+    speech->stats.speaking = false;
+    if(speech->aborted) speech->stats.aborted++;
+    speech->stats.last_subsamples = speech->pcm.subsamples;
+    speech->stats.last_nominal_ms = speech->pcm.nominal_us / 1000;
+    speech->stats.last_played_ms = furi_get_tick() - speech->started;
+    speech_unlock(speech);
+}
+
+static void speech_speak_item(Speech* speech, const SpeechItem* item) {
+    if(!speech_item_begin(speech, item)) return;
+
+    speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
+    SamVoice voice = SAM_VOICE_DEFAULT;
+    voice.speed = speech->rate;
+    speech->started = furi_get_tick();
 
     size_t pos = 0;
     while(!speech->aborted &&
@@ -268,22 +305,49 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
         }
     }
 
-    if(speech->aborted) {
-        if(speech->running) {
-            speech_hw_stop();
-            speech->running = false;
-        }
-    } else {
-        speech_flush(speech);
+    speech_item_end(speech);
+}
+
+static uint32_t speech_clamp_rate(uint32_t rate) {
+    if(rate < SPEECH_FILE_RATE_MIN) return SPEECH_FILE_RATE_MIN;
+    if(rate > SPEECH_FILE_RATE_MAX) return SPEECH_FILE_RATE_MAX;
+    return rate;
+}
+
+/**
+ * A file item: raw unsigned 8 bit mono samples from the card, read 512 bytes at a time and
+ * each held for 1000000000 / rate nanoseconds, through the same ring, speaker and stop rules
+ * as speech (speech_emit refuses the next sample once the item is superseded). A file that
+ * cannot be opened is dropped.
+ */
+static void speech_play_item(Speech* speech, const SpeechItem* item) {
+    File* file = storage_file_alloc(speech->storage);
+    if(!storage_file_open(file, item->text, FSAM_READ, FSOM_OPEN_EXISTING)) {
+        FURI_LOG_W(TAG, "Cannot open %s", item->text);
+        storage_file_close(file);
+        storage_file_free(file);
+        speech_lock(speech);
+        speech->stats.dropped++;
+        speech->stats.speaking = false;
+        speech_unlock(speech);
+        return;
     }
 
-    speech_lock(speech);
-    speech->stats.speaking = false;
-    if(speech->aborted) speech->stats.aborted++;
-    speech->stats.last_subsamples = speech->pcm.subsamples;
-    speech->stats.last_nominal_ms = speech->pcm.nominal_us / 1000;
-    speech->stats.last_played_ms = furi_get_tick() - started;
-    speech_unlock(speech);
+    if(speech_item_begin(speech, item)) {
+        uint32_t hold_ns = 1000000000u / speech_clamp_rate(item->rate);
+        speech->started = furi_get_tick();
+        while(!speech->aborted) {
+            size_t n = storage_file_read(file, speech->file_buffer, SPEECH_FILE_CHUNK);
+            if(n == 0) break; // end of file, or a read error
+            if(!speech_pcm_push_raw(
+                   &speech->pcm, speech->file_buffer, n, hold_ns, speech_emit, speech)) {
+                break; // superseded, stopped, or no DMA event: speech_emit set aborted
+            }
+        }
+        speech_item_end(speech);
+    }
+    storage_file_close(file);
+    storage_file_free(file);
 }
 
 static bool speech_pop(Speech* speech, SpeechItem* item) {
@@ -311,7 +375,11 @@ static int32_t speech_worker(void* context) {
         // A stop request has already retired the queue on the requesting thread; its flag
         // only wakes this loop, which then finds nothing or what was pushed after the request
         while(speech_pop(speech, item)) {
-            speech_speak_item(speech, item);
+            if(item->file) {
+                speech_play_item(speech, item);
+            } else {
+                speech_speak_item(speech, item);
+            }
         }
     }
     return 0;
@@ -326,6 +394,8 @@ Speech* speech_alloc(void) {
     speech->volume = 100;
     speech->lut_volume = 100;
     speech_pcm_init(&speech->pcm, 100, SPEECH_OVERHEAD_NS);
+    speech->storage = furi_record_open(RECORD_STORAGE);
+    speech->file_buffer = malloc(SPEECH_FILE_CHUNK);
 
     speech->thread = furi_thread_alloc_ex("SpeechWorker", 3 * 1024, speech_worker, speech);
     furi_thread_set_priority(speech->thread, FuriThreadPriorityHigh);
@@ -339,6 +409,15 @@ void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceab
     furi_check(speech && text);
     speech_lock(speech);
     speech_queue_push(&speech->queue, text, interrupt, replaceable);
+    speech->stats.queue_dropped = speech->queue.dropped;
+    speech_unlock(speech);
+    furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+}
+
+void speech_play(Speech* speech, const char* path, uint32_t rate) {
+    furi_check(speech && path);
+    speech_lock(speech);
+    speech_queue_push_file(&speech->queue, path, speech_clamp_rate(rate));
     speech->stats.queue_dropped = speech->queue.dropped;
     speech_unlock(speech);
     furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);

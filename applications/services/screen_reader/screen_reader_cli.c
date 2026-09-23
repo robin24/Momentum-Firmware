@@ -9,6 +9,7 @@
 #include <toolbox/pipe.h>
 #include <input/input.h>
 #include <momentum/settings.h>
+#include <storage/storage.h>
 
 static const char* sr_layer_name(uint8_t layer) {
     switch(layer) {
@@ -84,6 +85,7 @@ static void sr_cli_usage(void) {
     printf("  stop         stop speaking\r\n");
     printf("  rate <n>     SAM speed 40..120, bigger is slower (saved)\r\n");
     printf("  volume <n>   0..100 (saved)\r\n");
+    printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
 }
 
 static void sr_cli_screen(ScreenReader* sr) {
@@ -179,6 +181,39 @@ static void sr_cli_say(ScreenReader* sr, FuriString* args) {
     }
 }
 
+static void sr_cli_play(ScreenReader* sr, FuriString* args) {
+    FuriString* path = furi_string_alloc();
+    do {
+        if(!args_read_probably_quoted_string_and_trim(args, path)) {
+            printf("play what? sr play <path> [rate]\r\n");
+            break;
+        }
+        int rate = 16000;
+        if(furi_string_size(args) > 0 &&
+           (!args_read_int_and_trim(args, &rate) || rate < 8000 || rate > 32000)) {
+            printf("expected a sample rate from 8000 to 32000\r\n");
+            break;
+        }
+        Storage* storage = furi_record_open(RECORD_STORAGE);
+        FileInfo info;
+        FS_Error error = storage_common_stat(storage, furi_string_get_cstr(path), &info);
+        furi_record_close(RECORD_STORAGE);
+        if(error != FSE_OK || file_info_is_dir(&info)) {
+            printf(
+                "cannot play %s: %s\r\n",
+                furi_string_get_cstr(path),
+                error == FSE_OK ? "it is a folder" : filesystem_api_error_get_desc(error));
+            break;
+        }
+        speech_play(screen_reader_get_speech(sr), furi_string_get_cstr(path), (uint32_t)rate);
+        printf(
+            "playing %s at %d Hz; sr status shows the timing when it is done\r\n",
+            furi_string_get_cstr(path),
+            rate);
+    } while(false);
+    furi_string_free(path);
+}
+
 static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
     int value = 0;
     int lo = rate ? 40 : 0;
@@ -229,6 +264,8 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
             sr_cli_set_number(sr, args, true);
         } else if(furi_string_cmp_str(cmd, "volume") == 0) {
             sr_cli_set_number(sr, args, false);
+        } else if(furi_string_cmp_str(cmd, "play") == 0) {
+            sr_cli_play(sr, args);
         } else {
             sr_cli_usage();
         }

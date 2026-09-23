@@ -17,7 +17,13 @@ static void set_text(SpeechItem* item, const char* text) {
     item->text[n] = '\0';
 }
 
-void speech_queue_push(SpeechQueue* queue, const char* text, bool interrupt, bool replaceable) {
+static void push_item(
+    SpeechQueue* queue,
+    const char* text,
+    bool interrupt,
+    bool replaceable,
+    bool file,
+    uint32_t rate) {
     if(interrupt) {
         queue->generation++;
         queue->count = 0;
@@ -37,7 +43,17 @@ void speech_queue_push(SpeechQueue* queue, const char* text, bool interrupt, boo
     }
     item->generation = queue->generation;
     item->replaceable = replaceable;
+    item->file = file;
+    item->rate = rate;
     set_text(item, text);
+}
+
+void speech_queue_push(SpeechQueue* queue, const char* text, bool interrupt, bool replaceable) {
+    push_item(queue, text, interrupt, replaceable, false, 0);
+}
+
+void speech_queue_push_file(SpeechQueue* queue, const char* path, uint32_t rate) {
+    push_item(queue, path, true, false, true, rate);
 }
 
 bool speech_queue_pop(SpeechQueue* queue, SpeechItem* out) {
