@@ -12,7 +12,7 @@
  *    between the parts; a token with hyphens that matched nothing is split at the hyphens.
  * 5. A number followed by letters is the number and its unit: the letters as a term, spelled
  *    when one to five upper case letters outside the stop list, copied otherwise.
- * 6. Digits, optionally with a decimal part, are a number: words up to six digits without a
+ * 6. Digits, optionally with a decimal part, are a number: words up to four digits without a
  *    leading zero, digits one by one otherwise, "point" and digits for the decimal part.
  * 7. Upper case letters and digits, two or more with at least one letter, outside the stop list,
  *    are spelled by runs: one to five letters character by character unless the run is a stop
@@ -24,8 +24,8 @@
  *    comma (a space between digits), symbols become words, everything else a single space.
  * 10. Chunks end at a sentence, a comma or a word boundary when possible.
  * 11. A hyphen before a digit that is not inside a token is "minus".
- * 12. A hyphen with a digit on at least one side is "to" when it is the only hyphen of a token
- *    made of digit runs, and "dash" otherwise.
+ * 12. A hyphen with a digit on at least one side: "to" as the only hyphen between two digit runs
+ *    of the same length, a space between a digit run and two or more letters, "dash" otherwise.
  * 13. A token that is the single upper case letter A is "ay".
  */
 #include "speech_text.h"
@@ -107,7 +107,7 @@ static const char* const tens[] = {
     "ninety",
 };
 
-/** A value below one million in words, without "and": 1234 is one thousand two hundred thirty
+/** A value below ten thousand in words, without "and": 1234 is one thousand two hundred thirty
  * four. */
 static void number_words(Out* o, unsigned v) {
     if(v >= 1000) {
@@ -141,7 +141,7 @@ static void number_token(Out* o, const char* s, size_t n) {
     while(int_len < n && is_digit(s[int_len]))
         int_len++;
     bool leading_zero = int_len > 1 && s[0] == '0';
-    if(int_len <= 6 && !leading_zero) {
+    if(int_len <= 4 && !leading_zero) {
         unsigned v = 0;
         for(size_t i = 0; i < int_len; i++)
             v = v * 10 + (unsigned)(s[i] - '0');
@@ -332,10 +332,40 @@ static void process_unit(Out* o, const char* s, size_t n) {
 
 static void process_token(Out* o, const char* s, size_t n);
 
+/** Letters from s[i] on, as a count. */
+static size_t letters_from(const char* s, size_t n, size_t i) {
+    size_t k = 0;
+    while(i + k < n && is_alpha(s[i + k]))
+        k++;
+    return k;
+}
+
+/** Letters ending just before s[i], as a count. */
+static size_t letters_before(const char* s, size_t i) {
+    size_t k = 0;
+    while(k < i && is_alpha(s[i - 1 - k]))
+        k++;
+    return k;
+}
+
+/** Rule 12: the word for the hyphen at s[i] of a token with `count` hyphens, or null when the
+ * parts simply follow each other as in rule 4. `digit_parts` says every part is a digit run. */
+static const char* hyphen_word(const char* s, size_t n, size_t i, size_t count, bool digit_parts) {
+    bool left_digit = i > 0 && is_digit(s[i - 1]);
+    bool right_digit = i + 1 < n && is_digit(s[i + 1]);
+    if(!left_digit && !right_digit) return NULL;
+    if(digit_parts) {
+        // "to" only as the only hyphen, between two runs of the same digit count
+        return (count == 1 && i == n - 1 - i) ? "to" : "dash";
+    }
+    // a digit run next to two or more letters reads as two words
+    if(left_digit && letters_from(s, n, i + 1) >= 2) return NULL;
+    if(right_digit && letters_before(s, i) >= 2) return NULL;
+    return "dash";
+}
+
 /** Rules 4 and 12: split at every `sep` and process each part as a token. Periods get "dot"
- * between the parts. A hyphen with a digit on at least one side gets "to" when it is the only
- * hyphen of a token whose parts are all digit runs, and "dash" otherwise; a hyphen between
- * letters gets nothing. */
+ * between the parts; hyphens get what hyphen_word says. */
 static void split_token(Out* o, const char* s, size_t n, char sep) {
     size_t count = 0;
     bool digit_parts = true;
@@ -351,11 +381,8 @@ static void split_token(Out* o, const char* s, size_t n, char sep) {
         if(i < n && s[i] != sep) continue;
         process_token(o, s + start, i - start);
         if(i < n) {
-            if(sep == '.') {
-                out_word(o, "dot");
-            } else if((i > 0 && is_digit(s[i - 1])) || (i + 1 < n && is_digit(s[i + 1]))) {
-                out_word(o, digit_parts && count == 1 ? "to" : "dash");
-            }
+            const char* between = sep == '.' ? "dot" : hyphen_word(s, n, i, count, digit_parts);
+            if(between) out_word(o, between);
         }
         start = i + 1;
     }
