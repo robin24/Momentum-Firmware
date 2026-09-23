@@ -11,8 +11,8 @@
 extern "C" {
 #endif
 
-/** Four times an announcement: a hex dump screen expands to about 3.6 times its length. */
-#define SPEECH_TEXT_MAX  640
+/** Five times an announcement: a screen of two digit pairs expands about 4.7 times. */
+#define SPEECH_TEXT_MAX  800
 #define SPEECH_CHUNK_MAX 80
 
 /**
