@@ -3558,7 +3558,7 @@ static void Init(void) {
 //int Code39771()
 static int SAMMain(void) {
     Init();
-    phonemeindex[255] = 32; //to prevent buffer overflow
+    phonemeindex[255] = 255; // port guard: a terminator that scans can never run past
 
     if(!Parser1()) {
         return 0;
@@ -3599,7 +3599,7 @@ static void PrepareOutput(void) {
         // port: stop once the output callback asked to
         if(sam_aborted) return;
         A = phonemeindex[X];
-        if(A == 255) {
+        if(A == 255 || X == 255) { // port guard: the list ends at 255 whatever it holds
             A = 255;
             phonemeIndexOutput[Y] = 255;
             Render();
@@ -3627,6 +3627,13 @@ static void PrepareOutput(void) {
         stressOutput[Y] = stress[X];
         X++;
         Y++;
+        if(Y >= 59) { // port guard: the output arrays hold 60 entries; render what we have
+            phonemeIndexOutput[Y] = 255;
+            int temp = X; // Render uses X: keep the scan position, as the 254 case above does
+            Render();
+            X = temp;
+            Y = 0;
+        }
     }
 }
 
@@ -3636,6 +3643,7 @@ static void Insert(
     unsigned char mem60,
     unsigned char mem59,
     unsigned char mem58) {
+    if(position >= 255) return; // port guard: never overwrite the terminator slot
     int i;
     for(i = 253; i >= position; i--) // ML : always keep last safe-guarding 255
     {
@@ -3659,9 +3667,14 @@ static void InsertBreath(void) {
     X++;
     mem55 = 0;
     unsigned char mem66 = 0;
+    // port guards: the original loops forever when a clause of 232 or more frames has no
+    // pause to break at, or when the break position stops advancing
+    int last_break = -1;
+    unsigned breaks = 0;
     while(1) {
         //pos48440:
         X = mem66;
+        if(X == 255) return; // port guard: end of the list, never wrap around
         index = phonemeindex[X];
         if(index == 255) return;
         mem55 += phonemeLength[X];
@@ -3683,6 +3696,10 @@ static void InsertBreath(void) {
             mem66++;
             continue;
         }
+        // port guard: no pause behind us, or the same pause as last time: break right here
+        if(mem54 == 255 || (int)mem54 <= last_break) mem54 = X;
+        last_break = mem54;
+        if(++breaks > 64) return; // port guard: absolute cap
         X = mem54;
         phonemeindex[X] = 31; // 'Q*' glottal stop
         phonemeLength[X] = 4;
