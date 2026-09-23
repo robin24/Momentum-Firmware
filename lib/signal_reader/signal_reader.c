@@ -193,8 +193,6 @@ void signal_reader_start(SignalReader* instance, SignalReaderCallback callback, 
 
     // EXTI delay compensation
     instance->tim_cnt_compensation = 9;
-    instance->cnt_en = SIGNAL_READER_CAPTURE_TIM->CR1;
-    instance->cnt_en |= TIM_CR1_CEN;
 
     // TIM16 is shared with the speaker, and the speaker mutex is its single owner token:
     // acquiring it enables the timer and parks the speaker pin on the timer's alternate
@@ -202,6 +200,15 @@ void signal_reader_start(SignalReader* instance, SignalReaderCallback callback, 
     // speaker stays silent. Speech and beeps wait or skip while the listener holds it; enabling
     // the bus directly would furi_check against a speaker user that already enabled it.
     furi_check(furi_hal_speaker_acquire(FuriWaitForever));
+
+    // Read CR1 only now that the timer is ours: the bus enable in the acquire has just released
+    // the peripheral reset, so this is the reset value and not a live register of another user
+    instance->cnt_en = SIGNAL_READER_CAPTURE_TIM->CR1;
+    instance->cnt_en |= TIM_CR1_CEN;
+
+    // The acquire put the speaker pin on the timer; the listener drives no output, so keep the
+    // pin quiet for the whole emulation (the release re-initialises the pin itself)
+    furi_hal_gpio_init(&gpio_speaker, GpioModeAnalog, GpioPullDown, GpioSpeedLow);
 
     // Capture timer config
     LL_TIM_SetPrescaler(SIGNAL_READER_CAPTURE_TIM, 0);
