@@ -124,7 +124,8 @@ typedef struct {
 /** Trim, collapse spaces, drop the text cursor bar and non printable bytes. */
 void sr_normalize(const char* in, char* out, size_t out_size);
 
-/** Turn a frame into rows, focus, title, buttons. */
+/** Turn a frame into rows, focus, title, buttons. Rows are in reading order: notes first, then
+ *  by baseline and x. */
 void sr_screen_build(const SrFrame* frame, SrScreen* screen);
 
 /** All focus rows joined with ", ". Returns the length written. */

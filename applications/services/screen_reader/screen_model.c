@@ -82,7 +82,9 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
     screen->content_layer = frame->content_layer;
     screen->overflow = frame->overflow;
 
-    // Reading order: by baseline, then by x. Insertion sort on indices.
+    // Reading order: notes first (they have no position, and drawn text may pass above the top
+    // edge, as the lock screen's sliding cover does), then by baseline, then by x. Insertion sort
+    // on indices.
     uint8_t order[SR_MAX_RECORDS];
     uint8_t n = frame->count > SR_MAX_RECORDS ? SR_MAX_RECORDS : frame->count;
     for(uint8_t i = 0; i < n; i++) {
@@ -90,7 +92,8 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         while(j > 0) {
             const SrRecord* a = &frame->records[order[j - 1]];
             const SrRecord* b = &frame->records[i];
-            bool after = (a->y > b->y) || (a->y == b->y && a->x > b->x);
+            bool after = a->note != b->note ? b->note :
+                                              (a->y > b->y) || (a->y == b->y && a->x > b->x);
             if(!after) break;
             order[j] = order[j - 1];
             j--;
