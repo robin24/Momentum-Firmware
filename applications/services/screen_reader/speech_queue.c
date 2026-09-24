@@ -23,6 +23,7 @@ static void push_item(
     bool interrupt,
     bool replaceable,
     bool file,
+    bool spell,
     uint32_t rate) {
     if(interrupt) {
         queue->generation++;
@@ -44,16 +45,21 @@ static void push_item(
     item->generation = queue->generation;
     item->replaceable = replaceable;
     item->file = file;
+    item->spell = spell;
     item->rate = rate;
     set_text(item, text);
 }
 
 void speech_queue_push(SpeechQueue* queue, const char* text, bool interrupt, bool replaceable) {
-    push_item(queue, text, interrupt, replaceable, false, 0);
+    push_item(queue, text, interrupt, replaceable, false, false, 0);
 }
 
 void speech_queue_push_file(SpeechQueue* queue, const char* path, uint32_t rate) {
-    push_item(queue, path, true, false, true, rate);
+    push_item(queue, path, true, false, true, false, rate);
+}
+
+void speech_queue_push_spelled(SpeechQueue* queue, const char* text) {
+    push_item(queue, text, true, false, false, true, 0);
 }
 
 bool speech_queue_pop(SpeechQueue* queue, SpeechItem* out) {

@@ -7,6 +7,7 @@
 #include <furi.h>
 #include "screen_model.h"
 #include "speech.h"
+#include "sr_chords.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,10 @@ void screen_reader_get_stats(ScreenReader* sr, ScreenReaderStats* out);
 
 /** The speech engine, for the console command. */
 Speech* screen_reader_get_speech(ScreenReader* sr);
+
+/** Run a chord's command on the reader's thread, as the Back chords do; for sr chord. The latest
+ *  command wins when two arrive before the thread runs. */
+void screen_reader_run_command(ScreenReader* sr, SrChordCommand command);
 
 #ifdef __cplusplus
 }

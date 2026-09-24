@@ -10,7 +10,8 @@
 #define TAG "ScreenReader"
 
 #define SR_FLAG_FRAME     (1 << 0)
-#define SR_FLAG_ALL       (SR_FLAG_FRAME)
+#define SR_FLAG_COMMAND   (1 << 1)
+#define SR_FLAG_ALL       (SR_FLAG_FRAME | SR_FLAG_COMMAND)
 #define SR_SETTLE_MS      50
 #define SR_MAX_LATENCY_MS 300
 #define SR_KEY_RECENT_MS  500
@@ -39,6 +40,10 @@ struct ScreenReader {
     FuriPubSub* input_events;
     FuriPubSubSubscription* input_subscription;
     volatile uint32_t last_press_tick;
+
+    // Chords: the state belongs to the input filter; a command waits here for the service thread
+    SrChords chords;
+    volatile uint8_t pending_command;
 };
 
 static void sr_lock(ScreenReader* sr) {
@@ -101,9 +106,44 @@ static void sr_input_callback(const void* value, void* context) {
         // Any key silences speech. speech_stop retires the queue under the speech mutex (its
         // users hold it for microseconds) and wakes the worker; this callback runs on the
         // input service thread, not in an interrupt, and the stop lands before the app has
-        // seen the key, so the announcement the key causes is queued after it and survives
+        // seen the key, so the announcement the key causes is queued after it and survives.
+        // The filter drops the Press of a chord key before it gets here, so a command's own
+        // speech is not stopped by the key that asked for it
         speech_stop(sr->speech);
     }
+}
+
+void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
+    furi_check(sr);
+    sr->pending_command = (uint8_t)command;
+    furi_thread_flags_set(sr->thread_id, SR_FLAG_COMMAND);
+}
+
+// Input filter: runs on the input service, timer service or a console thread, serialized by
+// the input filter lock. It must not block, call input_set_filter or publish input events.
+// Installed once at start and read like the text tap reads the setting: while the reader is off,
+// whoever turned it off (the console, or the settings app writing the setting directly), every
+// event passes and the chord state stays fresh for when it comes back on
+static void sr_input_filter(const InputEvent* event, InputFilterResult* result, void* context) {
+    ScreenReader* sr = context;
+    if(!momentum_settings.screen_reader) {
+        sr_chords_init(&sr->chords);
+        return;
+    }
+    bool drop = false, emit_long = false;
+    SrChordCommand command =
+        sr_chords_feed(&sr->chords, event->key, event->type, furi_get_tick(), &drop, &emit_long);
+    result->drop = drop;
+    result->emit_long = emit_long;
+    if(command != SrChordNone) screen_reader_run_command(sr, command);
+}
+
+// The rate, volume and voice as saved, pushed before the reader speaks: the settings app writes
+// momentum_settings and its changes apply from the next announcement on (two cheap stores)
+static void sr_push_voice(ScreenReader* sr) {
+    speech_set_voice(
+        sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)momentum_settings.sr_volume);
+    speech_set_voice_clips(sr->speech, momentum_settings.sr_voice);
 }
 
 // Runs the model under the mutex (well under a millisecond) so that the console
@@ -135,6 +175,7 @@ static void sr_process(ScreenReader* sr) {
                 if(momentum_settings.screen_reader) {
                     // Screen and focus announcements interrupt what is being said; a change
                     // on the same screen waits its turn and replaces a change still waiting
+                    sr_push_voice(sr);
                     speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
                 }
             }
@@ -144,6 +185,61 @@ static void sr_process(ScreenReader* sr) {
         }
     }
     sr_unlock(sr);
+}
+
+// A chord's command, on the service thread. Every command interrupts what is being said
+static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
+    char* text = malloc(SR_ANN_TEXT_MAX);
+    SrScreen* screen = malloc(sizeof(SrScreen));
+    screen_reader_get_screen(sr, screen);
+    sr_push_voice(sr);
+    switch(command) {
+    case SrChordReadAll:
+        sr_screen_describe(screen, text, SR_ANN_TEXT_MAX);
+        if(text[0] == '\0') {
+            // The home screen draws no text of its own; the model announces it the same way
+            strlcpy(
+                text,
+                screen->content_layer == SrLayerDesktop ? "Home screen" : "Nothing on screen",
+                SR_ANN_TEXT_MAX);
+        }
+        speech_say(sr->speech, text, true, false);
+        break;
+    case SrChordStatus:
+        sr_status_text(screen, text, SR_ANN_TEXT_MAX);
+        if(text[0] == '\0') strlcpy(text, "No status bar", SR_ANN_TEXT_MAX);
+        speech_say(sr->speech, text, true, false);
+        break;
+    case SrChordRepeat:
+        sr_focus_with_position(screen, text, SR_ANN_TEXT_MAX);
+        if(text[0] == '\0') strlcpy(text, "No focus", SR_ANN_TEXT_MAX);
+        speech_say(sr->speech, text, true, false);
+        break;
+    case SrChordSpell:
+        sr_screen_focus_text(screen, text, SR_ANN_TEXT_MAX);
+        if(text[0] == '\0') {
+            speech_say(sr->speech, "No focus", true, false); // said, not spelled
+        } else {
+            speech_say_spelled(sr->speech, text);
+        }
+        break;
+    case SrChordVolumeDown:
+    case SrChordVolumeUp: {
+        int v = (int)momentum_settings.sr_volume + (command == SrChordVolumeUp ? 10 : -10);
+        if(v < 0) v = 0;
+        if(v > 100) v = 100;
+        momentum_settings.sr_volume = (uint32_t)v;
+        momentum_settings_save();
+        speech_set_voice(sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)v);
+        snprintf(text, SR_ANN_TEXT_MAX, "Volume %d", v);
+        speech_say(sr->speech, text, true, false);
+        break;
+    }
+    default:
+        break;
+    }
+    free(screen);
+    free(text);
 }
 
 void screen_reader_get_frame(ScreenReader* sr, SrFrame* out) {
@@ -219,6 +315,8 @@ int32_t screen_reader_srv(void* p) {
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);
+    sr_chords_init(&sr->chords);
+    input_set_filter(sr_input_filter, sr);
 
     sr->gui = furi_record_open(RECORD_GUI);
     gui_tap_set(sr->gui, &screen_reader_tap, sr);
@@ -240,7 +338,12 @@ int32_t screen_reader_srv(void* p) {
             // Timeout: the screen has settled, or waited long enough
             pending = false;
             sr_process(sr);
-        } else if(flags & SR_FLAG_FRAME) {
+            continue;
+        }
+        if(flags & SR_FLAG_COMMAND) {
+            sr_run_command(sr, (SrChordCommand)sr->pending_command);
+        }
+        if(flags & SR_FLAG_FRAME) {
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }

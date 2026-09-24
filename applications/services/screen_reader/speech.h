@@ -37,6 +37,12 @@ Speech* speech_alloc(void);
  *  replaceable item is overwritten instead of queued behind it. */
 void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable);
 
+/** Queue text to be spelled: what is being said stops and what waits is dropped, as with an
+ *  interrupting speech_say. Every word is spelled with the letter and digit clips, 60 ms between
+ *  letters and 150 ms between words; SAM says the letters one by one when the recorded voice is
+ *  off or missing. */
+void speech_say_spelled(Speech* speech, const char* text);
+
 /** Play a file of raw unsigned 8 bit mono samples (128 is silence) from the card in place of
  *  speech: what is being said stops, what waits is dropped, and the file plays through the
  *  same ring, speaker and stop rules. rate is in samples per second, 8000 to 32000 (values
@@ -55,7 +61,7 @@ typedef struct {
     bool enabled; /**< recorded clips are used when the vocabulary is present */
     bool vocabulary; /**< /ext/sr/voice was found on the card */
     uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
-    uint32_t fallback_words; /**< words spelled letter by letter since boot */
+    uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */
     uint32_t missing_words; /**< distinct words recorded in /ext/sr/missing.txt since boot */
     uint32_t open_max_ms; /**< longest clip open since boot, found or not */
     uint32_t open_last_ms; /**< the latest clip open */

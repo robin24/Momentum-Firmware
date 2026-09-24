@@ -119,8 +119,10 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         bool focus = r->focus || (!any_focus_hint && r->inverted && !button && !status);
         // A record only joins the row above it when it reads the same way. On the on screen
         // keyboard every key of a row shares one baseline, so the selected key is its own row.
+        // Buttons and status items never join: the clock and the battery percentage sit a
+        // pixel apart on the status bar and are read as two items.
         SrRowKind kind = sr_record_row_kind(status, button, focus);
-        bool same_row = row && kind != SrRowButton && row->kind == kind &&
+        bool same_row = row && kind != SrRowButton && kind != SrRowStatus && row->kind == kind &&
                         (r->y - row->y) <= SR_ROW_Y_TOLERANCE &&
                         (row->y - r->y) <= SR_ROW_Y_TOLERANCE;
         if(!same_row) {
@@ -171,6 +173,34 @@ static void sr_append_position(char* out, size_t out_size, const SrRow* row) {
     char pos[32];
     snprintf(pos, sizeof(pos), ", %u of %u", (unsigned)row->index, (unsigned)row->count);
     sr_append(out, out_size, pos);
+}
+
+/** The position of the first focus row that knows it, as ", 3 of 11"; nothing when none does. */
+static void sr_append_focus_position(const SrScreen* screen, char* out, size_t out_size) {
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        if(screen->rows[i].kind == SrRowFocus && screen->rows[i].count) {
+            sr_append_position(out, out_size, &screen->rows[i]);
+            return;
+        }
+    }
+}
+
+size_t sr_focus_with_position(const SrScreen* screen, char* out, size_t out_size) {
+    if(sr_screen_focus_text(screen, out, out_size) == 0) return 0;
+    sr_append_focus_position(screen, out, out_size);
+    return strlen(out);
+}
+
+size_t sr_status_text(const SrScreen* screen, char* out, size_t out_size) {
+    if(out_size == 0) return 0;
+    out[0] = '\0';
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        const SrRow* row = &screen->rows[i];
+        if(row->kind != SrRowStatus) continue;
+        if(out[0] != '\0') sr_append(out, out_size, ", ");
+        sr_append(out, out_size, row->text);
+    }
+    return strlen(out);
 }
 
 static const char* sr_button_side(const SrRow* row) {
@@ -282,14 +312,7 @@ static void
     if(focus[0] != '\0') {
         if(out[0] != '\0') sr_append(out, out_size, ". ");
         sr_append(out, out_size, focus);
-        if(model->verbosity >= 2) {
-            for(uint8_t i = 0; i < s->row_count; i++) {
-                if(s->rows[i].kind == SrRowFocus && s->rows[i].count) {
-                    sr_append_position(out, out_size, &s->rows[i]);
-                    break;
-                }
-            }
-        }
+        if(model->verbosity >= 2) sr_append_focus_position(s, out, out_size);
     } else {
         for(uint8_t i = 0; i < s->row_count; i++) {
             const SrRow* row = &s->rows[i];
@@ -367,14 +390,7 @@ size_t sr_model_process(
         sr_screen_focus_text(&model->prev, focus_was, sizeof(focus_was));
         if(focus_now[0] != '\0' && strcmp(focus_now, focus_was) != 0) {
             sr_copy(text, sizeof(text), focus_now);
-            if(model->verbosity >= 2) {
-                for(uint8_t i = 0; i < cur->row_count; i++) {
-                    if(cur->rows[i].kind == SrRowFocus && cur->rows[i].count) {
-                        sr_append_position(text, sizeof(text), &cur->rows[i]);
-                        break;
-                    }
-                }
-            }
+            if(model->verbosity >= 2) sr_append_focus_position(cur, text, sizeof(text));
             sr_emit(out, out_max, &n, SrAnnFocus, true, text);
         } else if(sr_typed_character(&model->prev, cur, text, sizeof(text))) {
             sr_emit(out, out_max, &n, SrAnnTyped, true, text);

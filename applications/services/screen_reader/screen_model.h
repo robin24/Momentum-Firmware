@@ -126,6 +126,15 @@ size_t sr_screen_focus_text(const SrScreen* screen, char* out, size_t out_size);
 /** Title, rows, focus with position, buttons, as one readable text. */
 size_t sr_screen_describe(const SrScreen* screen, char* out, size_t out_size);
 
+/** The status bar rows (clock, battery percentage) joined with ", ". Returns the length
+ *  written, 0 when the status bar has no text. */
+size_t sr_status_text(const SrScreen* screen, char* out, size_t out_size);
+
+/** The focus text, then the position of the first focus row that knows it: "Apps, 3 of 11".
+ *  Just the focus text when no position is known. Returns the length written, 0 without
+ *  focus. */
+size_t sr_focus_with_position(const SrScreen* screen, char* out, size_t out_size);
+
 void sr_model_init(SrModel* model, uint8_t verbosity);
 
 /** Compare the frame with the previous one and write announcements. Returns how many. */

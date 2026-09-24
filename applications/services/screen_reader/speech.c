@@ -29,6 +29,7 @@
 #define SPEECH_FLAG_HALF1 (1 << 3) /* DMA finished playing the second half */
 
 #define SPEECH_VOICE_HOLD_NS       (1000000000u / SPEECH_VOICE_HZ)
+#define SPEECH_SPELL_WORD_GAP_MS   150 /* at least this between the words of a spelled item */
 #define SPEECH_VOICE_MISSING_PATH  "/ext/sr/missing.txt"
 #define SPEECH_VOICE_SETTINGS_PATH SPEECH_VOICE_DIR "/voice.txt"
 
@@ -356,18 +357,22 @@ static bool speech_play_clip(Speech* speech, const char* path) {
     return true;
 }
 
-/** SAM speaks a word, upper cased with a closing period: the last resort for a spelled
- *  character whose clip is missing too. */
-static void speech_sam_word(Speech* speech, const char* word, const SamVoice* voice) {
-    size_t len = strlen(word);
-    if(len > sizeof(speech->chunk) - 3) len = sizeof(speech->chunk) - 3;
-    for(size_t i = 0; i < len; i++) {
-        char c = word[i];
-        speech->chunk[i] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+/**
+ * SAM speaks the chunk buffer, upper cased. A closing period gives the synthesizer a pause to
+ * shape the end on. The reciter inside SAM stops at a word boundary once its phoneme string is
+ * full and reports how much text it used; the rest goes to further calls.
+ */
+static void speech_sam_chunk(Speech* speech, const SamVoice* voice) {
+    for(char* p = speech->chunk; *p; p++) {
+        if(*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
     }
-    speech->chunk[len] = '.';
-    speech->chunk[len + 1] = '\0';
-    len++;
+    size_t len = strlen(speech->chunk);
+    if(len > 0 && len < sizeof(speech->chunk) - 1 &&
+       strchr(".?!,", speech->chunk[len - 1]) == NULL) {
+        speech->chunk[len] = '.';
+        speech->chunk[len + 1] = '\0';
+        len++;
+    }
     size_t offset = 0;
     while(offset < len && !speech->aborted) {
         size_t consumed = 0;
@@ -375,6 +380,12 @@ static void speech_sam_word(Speech* speech, const char* word, const SamVoice* vo
         if(consumed == 0) break;
         offset += consumed;
     }
+}
+
+/** SAM speaks a word: the last resort for a spelled character whose clip is missing too. */
+static void speech_sam_word(Speech* speech, const char* word, const SamVoice* voice) {
+    strlcpy(speech->chunk, word, sizeof(speech->chunk) - 1);
+    speech_sam_chunk(speech, voice);
 }
 
 /**
@@ -400,18 +411,26 @@ static void speech_spell_word(Speech* speech, const char* word, const SamVoice* 
  * The expanded text word by word: a clip when the card has it, spelled with the letter clips
  * when not. A token's pause is pushed before the next token, so it separates the two and none
  * follows the last one: the play out starts right after the last word. A token of punctuation
- * only speaks nothing, but its pause still goes between its neighbours.
+ * only speaks nothing, but its pause still goes between its neighbours. A spelled item spells
+ * every word, with at least SPEECH_SPELL_WORD_GAP_MS between words.
  */
-static void speech_speak_words(Speech* speech, const SamVoice* voice) {
+static void speech_speak_words(Speech* speech, const SamVoice* voice, bool spell) {
     size_t pos = 0;
     SpeechVoiceWord word;
     uint32_t pending_pause_ms = 0;
     while(!speech->aborted && speech_voice_next_word(speech->expanded, &pos, &word)) {
         if(pending_pause_ms > 0 && !speech_push_silence(speech, pending_pause_ms)) break;
         pending_pause_ms = word.pause_ms;
+        if(spell && pending_pause_ms < SPEECH_SPELL_WORD_GAP_MS) {
+            pending_pause_ms = SPEECH_SPELL_WORD_GAP_MS;
+        }
         if(word.word[0] == '\0') continue;
-        if(speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
-           speech_play_clip(speech, speech->path)) {
+        if(spell) {
+            // Asked for: its letters count as clips, the word is neither a fallback nor missing
+            speech_spell_word(speech, word.word, voice);
+        } else if(
+            speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
+            speech_play_clip(speech, speech->path)) {
             speech->voice.clip_words++;
         } else {
             speech->voice.fallback_words++;
@@ -441,43 +460,87 @@ static void speech_write_missing(Speech* speech) {
     if(opened) speech_voice_log_clear(&speech->voice);
 }
 
+/**
+ * The text of a spelled item, for both paths: its own characters rather than the expansion,
+ * which would turn digits into number words and terms into their pronunciation. Letters and
+ * digits are kept, any other character separates words as a space does, and a run longer than
+ * a clip name is split so that nothing is cut.
+ */
+static void speech_spell_copy(const char* in, char* out, size_t out_size) {
+    size_t o = 0;
+    size_t run = 0;
+    for(const char* p = in; *p != '\0' && o + 2 < out_size; p++) {
+        char c = *p;
+        bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        if(!alnum || run == SPEECH_VOICE_WORD_MAX - 1) {
+            out[o++] = ' ';
+            run = 0;
+        }
+        if(alnum) {
+            out[o++] = c;
+            run++;
+        }
+    }
+    out[o] = '\0';
+}
+
+/**
+ * A spelled item without the recorded voice: SAM says the letters and digits one by one, A as
+ * "AY" because a lone A is read as the article, with a comma between words for a pause. The
+ * chunk buffer takes as many as fit and is spoken before it is filled again.
+ */
+static void speech_sam_spell(Speech* speech, const SamVoice* voice) {
+    const char* p = speech->expanded;
+    while(*p != '\0' && !speech->aborted) {
+        size_t len = 0;
+        // "AY " is the longest piece; the closing period and the terminator have the two bytes
+        // the buffer holds beyond SPEECH_CHUNK_MAX
+        for(; *p != '\0' && len + 3 <= SPEECH_CHUNK_MAX; p++) {
+            if(*p == ' ') {
+                if(len >= 2 && speech->chunk[len - 2] != ',') {
+                    speech->chunk[len - 1] = ',';
+                    speech->chunk[len++] = ' ';
+                }
+                continue;
+            }
+            speech->chunk[len++] = *p;
+            if(*p == 'a' || *p == 'A') speech->chunk[len++] = 'Y';
+            speech->chunk[len++] = ' ';
+        }
+        while(len > 0 && (speech->chunk[len - 1] == ' ' || speech->chunk[len - 1] == ','))
+            len--;
+        speech->chunk[len] = '\0';
+        if(len > 0) speech_sam_chunk(speech, voice);
+    }
+}
+
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     if(!speech_item_begin(speech, item)) return;
 
-    speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
+    if(item->spell) {
+        speech_spell_copy(item->text, speech->expanded, sizeof(speech->expanded));
+    } else {
+        speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
+    }
     SamVoice voice = SAM_VOICE_DEFAULT;
     voice.speed = speech->rate;
     speech->started = furi_get_tick();
 
     if(speech->voice_enabled && speech_voice_ready(speech)) {
-        speech_speak_words(speech, &voice);
+        speech_speak_words(speech, &voice, item->spell);
         speech_item_end(speech);
         speech_write_missing(speech);
         return;
     }
 
-    size_t pos = 0;
-    while(!speech->aborted &&
-          speech_text_next_chunk(speech->expanded, &pos, speech->chunk, sizeof(speech->chunk))) {
-        for(char* p = speech->chunk; *p; p++) {
-            if(*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
-        }
-        // A closing period gives the synthesizer a pause to shape the end of the chunk on
-        size_t len = strlen(speech->chunk);
-        if(len > 0 && len < sizeof(speech->chunk) - 1 &&
-           strchr(".?!,", speech->chunk[len - 1]) == NULL) {
-            speech->chunk[len] = '.';
-            speech->chunk[len + 1] = '\0';
-            len++;
-        }
-        // The reciter inside SAM stops at a word boundary once its phoneme string is full and
-        // reports how much text it used; speak the rest with further calls
-        size_t offset = 0;
-        while(offset < len && !speech->aborted) {
-            size_t consumed = 0;
-            sam_speak(speech->chunk + offset, &voice, speech_sam_output, speech, &consumed);
-            if(consumed == 0) break;
-            offset += consumed;
+    if(item->spell) {
+        speech_sam_spell(speech, &voice);
+    } else {
+        size_t pos = 0;
+        while(
+            !speech->aborted &&
+            speech_text_next_chunk(speech->expanded, &pos, speech->chunk, sizeof(speech->chunk))) {
+            speech_sam_chunk(speech, &voice);
         }
     }
 
@@ -588,6 +651,15 @@ void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceab
     furi_check(speech && text);
     speech_lock(speech);
     speech_queue_push(&speech->queue, text, interrupt, replaceable);
+    speech->stats.queue_dropped = speech->queue.dropped;
+    speech_unlock(speech);
+    furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+}
+
+void speech_say_spelled(Speech* speech, const char* text) {
+    furi_check(speech && text);
+    speech_lock(speech);
+    speech_queue_push_spelled(&speech->queue, text);
     speech->stats.queue_dropped = speech->queue.dropped;
     speech_unlock(speech);
     furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);

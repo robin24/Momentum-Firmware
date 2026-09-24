@@ -87,7 +87,10 @@ static void sr_cli_usage(void) {
     printf("  volume <n>   0..100 (saved)\r\n");
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
-        "  voice on|off|status  recorded word clips from the card, SAM for the rest (saved)\r\n");
+        "  voice on|off|status  recorded word clips from the card, spelled letters for the rest (saved)\r\n");
+    printf(
+        "  chord up|down|ok|okhold|left|right  what Back plus that key does: screen, status bar,\r\n"
+        "               focus, focus spelled, volume down, volume up\r\n");
 }
 
 static void sr_cli_screen(ScreenReader* sr) {
@@ -254,6 +257,33 @@ static void sr_cli_play(ScreenReader* sr, FuriString* args) {
     furi_string_free(path);
 }
 
+static void sr_cli_chord(ScreenReader* sr, FuriString* args) {
+    static const struct {
+        const char* key;
+        SrChordCommand command;
+        const char* does;
+    } chords[] = {
+        {"up", SrChordReadAll, "read the screen"},
+        {"down", SrChordStatus, "read the status bar"},
+        {"ok", SrChordRepeat, "repeat the focus"},
+        {"okhold", SrChordSpell, "spell the focus"},
+        {"left", SrChordVolumeDown, "volume down"},
+        {"right", SrChordVolumeUp, "volume up"},
+    };
+    FuriString* key = furi_string_alloc();
+    bool has = args_read_string_and_trim(args, key);
+    size_t i = 0;
+    while(i < COUNT_OF(chords) && !(has && furi_string_cmp_str(key, chords[i].key) == 0))
+        i++;
+    if(i < COUNT_OF(chords)) {
+        screen_reader_run_command(sr, chords[i].command);
+        printf("back + %s: %s\r\n", chords[i].key, chords[i].does);
+    } else {
+        printf("sr chord up|down|ok|okhold|left|right\r\n");
+    }
+    furi_string_free(key);
+}
+
 static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
     int value = 0;
     int lo = rate ? 40 : 0;
@@ -308,6 +338,8 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
             sr_cli_play(sr, args);
         } else if(furi_string_cmp_str(cmd, "voice") == 0) {
             sr_cli_voice(sr, args);
+        } else if(furi_string_cmp_str(cmd, "chord") == 0) {
+            sr_cli_chord(sr, args);
         } else {
             sr_cli_usage();
         }
