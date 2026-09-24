@@ -16,7 +16,8 @@ extern "C" {
 
 #define SPEECH_VOICE_DIR         "/ext/sr/voice"
 #define SPEECH_VOICE_WORD_MAX    32 /**< clip name with its terminator */
-#define SPEECH_VOICE_PATH_MAX    64 /**< "/ext/sr/voice/x/" + name + ".raw" */
+#define SPEECH_VOICE_PATH_MAX    64 /**< "/ext/sr/voice/hh/" + name + ".raw" */
+#define SPEECH_VOICE_BUCKETS     64 /**< clip folders on the card, chosen by the word's hash */
 #define SPEECH_VOICE_MISSING_SET 64 /**< words remembered as missing, once per boot each */
 #define SPEECH_VOICE_LOG_MAX     8 /**< missing words kept for the log per utterance */
 #define SPEECH_VOICE_HZ          16000u
@@ -33,12 +34,19 @@ typedef struct {
 /** The next word of `text` from *pos; false at the end. A token is a run of non-space
  *  characters; its last character decides the pause (period, question and exclamation mark:
  *  stop; comma, semicolon, colon: comma; anything else: gap), then punctuation is stripped
- *  from both ends and the rest lower cased and cut at SPEECH_VOICE_WORD_MAX - 1 characters. */
+ *  from both ends, apostrophes are left out ("don't" is the clip dont, which the generator
+ *  makes from the spoken "don't"), and the rest is lower cased and cut at
+ *  SPEECH_VOICE_WORD_MAX - 1 characters. */
 bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out);
 
-/** The clip path of a word: SPEECH_VOICE_DIR "/<initial>/<word>.raw", the initial being the
- *  word's first character when it is a lower case letter or a digit, '_' otherwise. Returns
- *  the length written, 0 for an empty word or a buffer too small. */
+/** FNV-1a, 32 bit, over the bytes of a word: the clip folder and the missing-word set. */
+uint32_t speech_voice_hash(const char* word);
+
+/** The clip path of a word: SPEECH_VOICE_DIR "/<hh>/<word>.raw", where hh is
+ *  speech_voice_hash(word) modulo SPEECH_VOICE_BUCKETS as two lower case hex digits. A
+ *  directory lookup on the card reads the entries one by one, so the vocabulary is spread over
+ *  64 folders of a few dozen clips each. Returns the length written, 0 for an empty word or a
+ *  buffer too small. */
 size_t speech_voice_path(const char* word, char* out, size_t out_size);
 
 typedef struct {

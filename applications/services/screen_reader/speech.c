@@ -12,7 +12,7 @@
 
 #define TAG "Speech"
 
-#define SPEECH_RING_SIZE          4096
+#define SPEECH_RING_SIZE          8192 /* two halves of 82 ms at 20 us per slot */
 #define SPEECH_HALF               (SPEECH_RING_SIZE / 2)
 #define SPEECH_OVERHEAD_NS        7400 /* calibrated against the Text to SAM demo, Task 5 */
 #define SPEECH_IDLE_RELEASE_MS    200
@@ -67,6 +67,8 @@ struct Speech {
     File* voice_file; /* reused for every clip and the missing log */
     SpeechVoiceState voice;
     char path[SPEECH_VOICE_PATH_MAX];
+    uint32_t open_max_ms; /* longest clip open since boot, found or not */
+    uint32_t open_last_ms;
 };
 
 static void speech_lock(Speech* speech) {
@@ -333,7 +335,12 @@ static bool speech_push_silence(Speech* speech, uint32_t ms) {
  */
 static bool speech_play_clip(Speech* speech, const char* path) {
     File* file = speech->voice_file;
-    if(!storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+    uint32_t start = furi_get_tick();
+    bool opened = storage_file_open(file, path, FSAM_READ, FSOM_OPEN_EXISTING);
+    uint32_t took = furi_get_tick() - start;
+    speech->open_last_ms = took;
+    if(took > speech->open_max_ms) speech->open_max_ms = took;
+    if(!opened) {
         storage_file_close(file);
         return false;
     }
@@ -628,6 +635,8 @@ void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     out->clip_words = *(volatile uint32_t*)&speech->voice.clip_words;
     out->fallback_words = *(volatile uint32_t*)&speech->voice.fallback_words;
     out->missing_words = *(volatile uint32_t*)&speech->voice.missing_words;
+    out->open_max_ms = *(volatile uint32_t*)&speech->open_max_ms;
+    out->open_last_ms = *(volatile uint32_t*)&speech->open_last_ms;
     strncpy(out->settings, speech->voice_settings, sizeof(out->settings) - 1);
     out->settings[sizeof(out->settings) - 1] = '\0';
 }

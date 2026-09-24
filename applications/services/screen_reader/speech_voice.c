@@ -37,29 +37,39 @@ bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out)
         start++;
     while(end > start && sv_is_punct(text[end - 1]))
         end--;
-    size_t n = end - start;
-    if(n > SPEECH_VOICE_WORD_MAX - 1) n = SPEECH_VOICE_WORD_MAX - 1;
-    for(size_t k = 0; k < n; k++) {
-        char c = text[start + k];
-        out->word[k] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+    size_t n = 0;
+    for(size_t k = start; k < end && n < SPEECH_VOICE_WORD_MAX - 1; k++) {
+        char c = text[k];
+        if(c == '\'') continue;
+        out->word[n++] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
     }
     out->word[n] = '\0';
     return true;
 }
 
+uint32_t speech_voice_hash(const char* word) {
+    uint32_t h = 2166136261u;
+    while(*word != '\0') {
+        h ^= (uint8_t)*word++;
+        h *= 16777619u;
+    }
+    return h;
+}
+
 size_t speech_voice_path(const char* word, char* out, size_t out_size) {
+    static const char hex[] = "0123456789abcdef";
     size_t n = strlen(word);
     if(n == 0) return 0;
-    char c = word[0];
-    char initial = ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) ? c : '_';
+    uint32_t bucket = speech_voice_hash(word) % SPEECH_VOICE_BUCKETS;
     size_t dir = strlen(SPEECH_VOICE_DIR);
-    size_t need = dir + 3 + n + 4 + 1; // "/x/" name ".raw" NUL
+    size_t need = dir + 4 + n + 4 + 1; // "/hh/" name ".raw" NUL
     if(need > out_size) return 0;
     char* p = out;
     memcpy(p, SPEECH_VOICE_DIR, dir);
     p += dir;
     *p++ = '/';
-    *p++ = initial;
+    *p++ = hex[(bucket >> 4) & 0xf];
+    *p++ = hex[bucket & 0xf];
     *p++ = '/';
     memcpy(p, word, n);
     p += n;
@@ -69,22 +79,13 @@ size_t speech_voice_path(const char* word, char* out, size_t out_size) {
     return (size_t)(p - out);
 }
 
-static uint32_t sv_hash(const char* s) {
-    uint32_t h = 2166136261u; // FNV-1a
-    while(*s != '\0') {
-        h ^= (uint8_t)*s++;
-        h *= 16777619u;
-    }
-    return h;
-}
-
 void speech_voice_state_init(SpeechVoiceState* state) {
     memset(state, 0, sizeof(*state));
 }
 
 bool speech_voice_missing(SpeechVoiceState* state, const char* word) {
     if(word[0] == '\0') return false;
-    uint32_t h = sv_hash(word);
+    uint32_t h = speech_voice_hash(word);
     for(size_t i = 0; i < state->count; i++) {
         if(state->hashes[i] == h) return false;
     }

@@ -57,6 +57,8 @@ typedef struct {
     uint32_t clip_words; /**< words spoken from clips since boot */
     uint32_t fallback_words; /**< words spoken by SAM since boot */
     uint32_t missing_words; /**< distinct words recorded in /ext/sr/missing.txt since boot */
+    uint32_t open_max_ms; /**< longest clip open since boot, found or not */
+    uint32_t open_last_ms; /**< the latest clip open */
     char settings[64]; /**< first line of /ext/sr/voice/voice.txt, empty when absent */
 } SpeechVoiceStats;
 

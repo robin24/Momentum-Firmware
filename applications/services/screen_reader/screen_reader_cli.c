@@ -127,14 +127,16 @@ static void sr_cli_print_voice(ScreenReader* sr) {
     SpeechVoiceStats v;
     speech_get_voice_stats(screen_reader_get_speech(sr), &v);
     printf(
-        "voice: %s, vocabulary %s%s%s, clips %lu, fallback %lu, missing %lu\r\n",
+        "voice: %s, vocabulary %s%s%s, clips %lu, fallback %lu, missing %lu, open max %lu ms, last %lu ms\r\n",
         v.enabled ? "on" : "off",
         v.vocabulary ? "yes" : "no",
         v.settings[0] ? " " : "",
         v.settings,
         (unsigned long)v.clip_words,
         (unsigned long)v.fallback_words,
-        (unsigned long)v.missing_words);
+        (unsigned long)v.missing_words,
+        (unsigned long)v.open_max_ms,
+        (unsigned long)v.open_last_ms);
 }
 
 static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
