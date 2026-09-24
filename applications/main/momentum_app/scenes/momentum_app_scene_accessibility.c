@@ -98,10 +98,13 @@ void momentum_app_scene_accessibility_on_enter(void* context) {
 
     item = variable_item_list_add(
         var_item_list, "Rate", SR_RATE_COUNT, momentum_app_scene_accessibility_rate_changed, app);
-    value_index = (momentum_settings.sr_rate - SR_RATE_MIN) / SR_RATE_STEP;
+    // Round to the nearest step so the label matches the index; sr_rate can be off-grid.
+    value_index = (momentum_settings.sr_rate - SR_RATE_MIN + (SR_RATE_STEP / 2)) / SR_RATE_STEP;
+    if(value_index > SR_RATE_COUNT - 1) value_index = SR_RATE_COUNT - 1;
     variable_item_set_current_value_index(item, value_index);
+    uint32_t rate_value = SR_RATE_MIN + (value_index * SR_RATE_STEP);
     char rate_str[6];
-    snprintf(rate_str, sizeof(rate_str), "%lu", momentum_settings.sr_rate);
+    snprintf(rate_str, sizeof(rate_str), "%lu", rate_value);
     variable_item_set_current_value_text(item, rate_str);
 
     item = variable_item_list_add(
@@ -110,10 +113,14 @@ void momentum_app_scene_accessibility_on_enter(void* context) {
         SR_VOLUME_COUNT,
         momentum_app_scene_accessibility_volume_changed,
         app);
-    value_index = (momentum_settings.sr_volume - SR_VOLUME_MIN) / SR_VOLUME_STEP;
+    // Round to the nearest step so the label matches the index; sr_volume can be off-grid.
+    value_index =
+        (momentum_settings.sr_volume - SR_VOLUME_MIN + (SR_VOLUME_STEP / 2)) / SR_VOLUME_STEP;
+    if(value_index > SR_VOLUME_COUNT - 1) value_index = SR_VOLUME_COUNT - 1;
     variable_item_set_current_value_index(item, value_index);
+    uint32_t volume_value = SR_VOLUME_MIN + (value_index * SR_VOLUME_STEP);
     char volume_str[6];
-    snprintf(volume_str, sizeof(volume_str), "%lu", momentum_settings.sr_volume);
+    snprintf(volume_str, sizeof(volume_str), "%lu", volume_value);
     variable_item_set_current_value_text(item, volume_str);
 
     item = variable_item_list_add(
