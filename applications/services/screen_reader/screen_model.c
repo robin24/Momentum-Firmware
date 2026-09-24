@@ -7,7 +7,6 @@
 // baseline at y=60, so only y=61 and below is a button by geometry.
 #define SR_BUTTON_ROW_Y    61
 #define SR_TITLE_MAX_Y     26
-#define SR_SPONTANEOUS_MS  1500
 #define SR_SPONTANEOUS_MAX 80
 
 static void sr_copy(char* out, size_t out_size, const char* in) {
@@ -400,6 +399,7 @@ size_t sr_model_process(
     bool key_recent,
     SrAnnouncement* out,
     size_t out_max) {
+    (void)now_ms; // reserved, see the header
     size_t n = 0;
     SrScreen* cur = &model->current;
     sr_screen_build(frame, cur);
@@ -446,15 +446,12 @@ size_t sr_model_process(
                 sr_append(text, sizeof(text), row->text);
             }
             if(text[0] != '\0') {
-                bool allowed = key_recent ||
-                               (now_ms - model->last_spontaneous_ms) >= SR_SPONTANEOUS_MS;
-                if(allowed) {
-                    if(!key_recent) {
-                        model->last_spontaneous_ms = now_ms;
-                        if(strlen(text) > SR_SPONTANEOUS_MAX) text[SR_SPONTANEOUS_MAX] = '\0';
-                    }
-                    sr_emit(out, out_max, &n, SrAnnChange, false, text);
+                // Every change is reported: the service says them at most once per change
+                // delay, always the latest (sr_throttle.h). Without a recent key the text is cut
+                if(!key_recent && strlen(text) > SR_SPONTANEOUS_MAX) {
+                    text[SR_SPONTANEOUS_MAX] = '\0';
                 }
+                sr_emit(out, out_max, &n, SrAnnChange, false, text);
             }
         }
     }

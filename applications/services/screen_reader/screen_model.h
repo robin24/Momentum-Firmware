@@ -117,7 +117,6 @@ typedef struct {
     SrScreen prev;
     SrScreen current;
     bool have_prev;
-    uint32_t last_spontaneous_ms;
     uint8_t verbosity; /**< 0 terse, 1 normal, 2 verbose */
 } SrModel;
 
@@ -146,7 +145,10 @@ size_t sr_focus_with_position(const SrScreen* screen, char* out, size_t out_size
 
 void sr_model_init(SrModel* model, uint8_t verbosity);
 
-/** Compare the frame with the previous one and write announcements. Returns how many. */
+/** Compare the frame with the previous one and write announcements. Returns how many. Every
+ *  change on the same screen is reported: the service spaces them (sr_throttle.h). key_recent: a
+ *  key was pressed within 500 ms; without one a change's text is cut at 80 characters. now_ms,
+ *  the frame's time, is reserved: the model keeps no time of its own. */
 size_t sr_model_process(
     SrModel* model,
     const SrFrame* frame,

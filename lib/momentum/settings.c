@@ -52,6 +52,7 @@ MomentumSettings momentum_settings = {
     .sr_volume = 100, // %
     .sr_verbosity = 1, // Normal
     .sr_voice = true, // recorded voice from the card
+    .sr_change_ms = 1500, // a same-screen change is said at most once per 1.5 s
 };
 
 typedef enum {
@@ -131,6 +132,7 @@ static const struct {
     {setting_uint(sr_volume, 0, 100)},
     {setting_uint(sr_verbosity, 0, 2)},
     {setting_bool(sr_voice)},
+    {setting_uint(sr_change_ms, 500, 3000)},
 };
 
 void momentum_settings_load(void) {

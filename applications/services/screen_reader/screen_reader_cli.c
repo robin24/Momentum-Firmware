@@ -87,6 +87,9 @@ static void sr_cli_usage(void) {
     printf("  stop         stop speaking\r\n");
     printf("  rate <n>     SAM speed 40..120, bigger is slower (saved)\r\n");
     printf("  volume <n>   0..100 (saved)\r\n");
+    printf(
+        "  delay <ms>   change delay 500..3000: a same-screen change is said at most once per\r\n"
+        "               delay, the latest (saved)\r\n");
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
         "  voice on|off|status  recorded word clips from the card, spelled letters for the rest (saved)\r\n");
@@ -171,10 +174,11 @@ static void sr_cli_status(ScreenReader* sr) {
     screen_reader_get_stats(sr, &stats);
     printf("enabled: %s\r\n", screen_reader_is_enabled(sr) ? "yes" : "no");
     printf(
-        "rate: %lu, volume: %lu, verbosity: %lu\r\n",
+        "rate: %lu, volume: %lu, verbosity: %lu, change delay %lu ms\r\n",
         (unsigned long)momentum_settings.sr_rate,
         (unsigned long)momentum_settings.sr_volume,
-        (unsigned long)momentum_settings.sr_verbosity);
+        (unsigned long)momentum_settings.sr_verbosity,
+        (unsigned long)momentum_settings.sr_change_ms);
     printf(
         "frames: %lu, dropped: %lu, announcements: %lu, suppressed: %lu\r\n",
         (unsigned long)stats.frames,
@@ -312,6 +316,20 @@ static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
     printf("%s set to %d\r\n", rate ? "rate" : "volume", value);
 }
 
+// The reader reads the setting at every change, so the new delay applies from the next one on
+static void sr_cli_delay(FuriString* args) {
+    int value = 0;
+    if(!args_read_int_and_trim(args, &value) || value < 500 || value > 3000) {
+        printf(
+            "expected a number of milliseconds from 500 to 3000; the change delay is %lu ms\r\n",
+            (unsigned long)momentum_settings.sr_change_ms);
+        return;
+    }
+    momentum_settings.sr_change_ms = (uint32_t)value;
+    momentum_settings_save();
+    printf("change delay set to %d ms\r\n", value);
+}
+
 static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
     ScreenReader* sr = context;
     FuriString* cmd = furi_string_alloc();
@@ -341,6 +359,8 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
             sr_cli_set_number(sr, args, true);
         } else if(furi_string_cmp_str(cmd, "volume") == 0) {
             sr_cli_set_number(sr, args, false);
+        } else if(furi_string_cmp_str(cmd, "delay") == 0) {
+            sr_cli_delay(args);
         } else if(furi_string_cmp_str(cmd, "play") == 0) {
             sr_cli_play(sr, args);
         } else if(furi_string_cmp_str(cmd, "voice") == 0) {

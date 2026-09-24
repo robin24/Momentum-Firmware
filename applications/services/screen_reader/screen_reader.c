@@ -1,5 +1,6 @@
 #include "screen_reader.h"
 #include "screen_reader_cli.h"
+#include "sr_throttle.h"
 
 #include <furi.h>
 #include <furi_hal_rtc.h>
@@ -63,6 +64,10 @@ struct ScreenReader {
     FuriPubSubSubscription* desktop_subscription;
     bool lock_said;
     uint32_t lock_said_tick;
+
+    // Same-screen changes said at most once per change delay, the latest held until its time
+    // comes; the service thread alone uses it
+    SrThrottle throttle;
 };
 
 static void sr_lock(ScreenReader* sr) {
@@ -217,6 +222,7 @@ static void sr_say_lock(ScreenReader* sr, const char* text, bool locked) {
         sr->lock_said = true;
         sr->lock_said_tick = furi_get_tick();
     }
+    sr_throttle_clear(&sr->throttle);
     sr_push_voice(sr);
     speech_say(sr->speech, a->text, a->interrupt, false);
     if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
@@ -258,7 +264,16 @@ static void sr_process(ScreenReader* sr) {
             bool unasked = a->kind == SrAnnChange || (a->kind == SrAnnHome && !a->interrupt);
             if((quiet_desktop && unasked) || after_lock) {
                 sr->stats.suppressed++;
+            } else if(
+                a->kind == SrAnnChange &&
+                !sr_throttle_offer(&sr->throttle, a->text, now, momentum_settings.sr_change_ms)) {
+                // Held: a change came within the change delay of the last one said. The loop
+                // says the latest when its time comes (sr_say_held_change), unless another
+                // announcement drops it first; the console mirror gets it when it is said
+                continue;
             } else {
+                // A new screen, focus, home, typed character or lock supersedes a held change
+                if(a->kind != SrAnnChange) sr_throttle_clear(&sr->throttle);
                 sr->stats.announcements++;
                 if(momentum_settings.screen_reader) {
                     // Screen and focus announcements interrupt what is being said; a change
@@ -271,6 +286,30 @@ static void sr_process(ScreenReader* sr) {
                 furi_message_queue_put(sr->watch_queue, a, 0);
             }
         }
+    }
+    sr_unlock(sr);
+}
+
+// A held change whose time has come, on the service thread: said as a change is, after what is
+// being said and replacing a change still waiting, and mirrored to the console
+static void sr_say_held_change(ScreenReader* sr) {
+    if(!sr->throttle.pending) return;
+    sr_lock(sr);
+    SrAnnouncement* a = &sr->announcements[0];
+    if(sr_throttle_due(
+           &sr->throttle,
+           furi_get_tick(),
+           momentum_settings.sr_change_ms,
+           a->text,
+           sizeof(a->text))) {
+        a->kind = SrAnnChange;
+        a->interrupt = false;
+        sr->stats.announcements++;
+        if(momentum_settings.screen_reader) {
+            sr_push_voice(sr);
+            speech_say(sr->speech, a->text, false, true);
+        }
+        if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
     }
     sr_unlock(sr);
 }
@@ -401,6 +440,7 @@ int32_t screen_reader_srv(void* p) {
     sr->thread_id = furi_thread_get_current_id();
     sr->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     sr_model_init(&sr->model, momentum_settings.sr_verbosity);
+    sr_throttle_init(&sr->throttle);
     sr->speech = speech_alloc();
     speech_set_voice(
         sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)momentum_settings.sr_volume);
@@ -422,16 +462,27 @@ int32_t screen_reader_srv(void* p) {
     bool pending = false;
     uint32_t pending_since = 0;
     while(true) {
-        uint32_t timeout = FuriWaitForever;
+        uint32_t frame_timeout = FuriWaitForever;
         if(pending) {
             uint32_t waited = furi_get_tick() - pending_since;
-            timeout = waited >= SR_MAX_LATENCY_MS ? 0 : SR_SETTLE_MS;
+            frame_timeout = waited >= SR_MAX_LATENCY_MS ? 0 : SR_SETTLE_MS;
+        }
+        // A held change wakes the loop when its time comes, at once when it is due already
+        uint32_t timeout = frame_timeout;
+        if(sr->throttle.pending) {
+            uint32_t wait = sr_throttle_wait_ms(
+                &sr->throttle, furi_get_tick(), momentum_settings.sr_change_ms);
+            if(wait < timeout) timeout = wait;
         }
         uint32_t flags = furi_thread_flags_wait(SR_FLAG_ALL, FuriFlagWaitAny, timeout);
         if(flags & FuriFlagError) {
-            // Timeout: the screen has settled, or waited long enough
-            pending = false;
-            sr_process(sr);
+            // Timeout: the screen has settled, or waited long enough. A frame still settling
+            // when a held change woke the loop settles on
+            if(pending && timeout == frame_timeout) {
+                pending = false;
+                sr_process(sr);
+            }
+            sr_say_held_change(sr);
             continue;
         }
         // A lock before an unlock, should both arrive at once
@@ -453,6 +504,7 @@ int32_t screen_reader_srv(void* p) {
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }
+        sr_say_held_change(sr);
     }
     return 0;
 }

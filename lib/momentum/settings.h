@@ -109,6 +109,7 @@ typedef struct {
     uint32_t sr_volume;
     uint32_t sr_verbosity;
     bool sr_voice;
+    uint32_t sr_change_ms;
 } MomentumSettings;
 
 void momentum_settings_save(void);
