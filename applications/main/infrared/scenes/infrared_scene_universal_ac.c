@@ -23,6 +23,7 @@ void infrared_scene_universal_ac_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 10, 37, &I_off_text_12x5);
+    button_panel_item_set_name(button_panel, i, "Off");
     infrared_brute_force_add_record(brute_force, i++, "Off");
     button_panel_add_item(
         button_panel,
@@ -36,6 +37,7 @@ void infrared_scene_universal_ac_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 41, 37, &I_dry_text_15x5);
+    button_panel_item_set_name(button_panel, i, "Dry");
     infrared_brute_force_add_record(brute_force, i++, "Dh");
     button_panel_add_item(
         button_panel,
@@ -48,6 +50,7 @@ void infrared_scene_universal_ac_on_enter(void* context) {
         &I_max_hover_24x23,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Cool high");
     infrared_brute_force_add_record(brute_force, i++, "Cool_hi");
     button_panel_add_item(
         button_panel,
@@ -60,6 +63,7 @@ void infrared_scene_universal_ac_on_enter(void* context) {
         &I_max_hover_24x23,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Heat high");
     infrared_brute_force_add_record(brute_force, i++, "Heat_hi");
     if(furi_hal_rtc_get_locale_units() == FuriHalRtcLocaleUnitsMetric) {
         button_panel_add_item(
@@ -86,6 +90,7 @@ void infrared_scene_universal_ac_on_enter(void* context) {
             infrared_scene_universal_common_item_callback,
             context);
     }
+    button_panel_item_set_name(button_panel, i, "Cool low");
     infrared_brute_force_add_record(brute_force, i++, "Cool_lo");
 
     if(furi_hal_rtc_get_locale_units() == FuriHalRtcLocaleUnitsMetric) {
@@ -113,6 +118,7 @@ void infrared_scene_universal_ac_on_enter(void* context) {
             infrared_scene_universal_common_item_callback,
             context);
     }
+    button_panel_item_set_name(button_panel, i, "Heat low");
     infrared_brute_force_add_record(brute_force, i++, "Heat_lo");
 
     button_panel_add_icon(button_panel, 0, 60, &I_cool_30x51);

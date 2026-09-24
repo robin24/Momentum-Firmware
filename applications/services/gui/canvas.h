@@ -484,6 +484,19 @@ void canvas_draw_rbox(
     size_t height,
     size_t radius);
 
+/** Tell the screen reader what an icon-only view shows, as if it were drawn text.
+ *
+ * Nothing is drawn. Call it from a draw callback: the text becomes a row of the screen the
+ * reader describes, the focused item when focus is true (for example the name of the selected
+ * icon button), otherwise a normal row. A note is never the screen's title and has no position:
+ * it is read before the text drawn on the screen. Does nothing while no screen reader listens.
+ *
+ * @param      canvas  Canvas instance
+ * @param      text    the words, copied at once (up to 47 characters are kept)
+ * @param      focus   true when the text names the focused item
+ */
+void canvas_tap_hint_note(Canvas* canvas, const char* text, bool focus);
+
 #ifdef __cplusplus
 }
 #endif

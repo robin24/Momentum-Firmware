@@ -29,6 +29,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 35, &I_power_text_24x5);
+    button_panel_item_set_name(button_panel, i, "Power");
     infrared_brute_force_add_record(brute_force, i++, "Power");
 
     // Eject button (using mute icon as a placeholder)
@@ -44,6 +45,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 39, 35, &I_eject_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Eject");
     infrared_brute_force_add_record(brute_force, i++, "Eject");
 
     // Play button
@@ -59,6 +61,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 6, 64, &I_play_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Play");
     infrared_brute_force_add_record(brute_force, i++, "Play");
 
     // Pause button
@@ -74,6 +77,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 37, 64, &I_pause_text_23x5);
+    button_panel_item_set_name(button_panel, i, "Pause");
     infrared_brute_force_add_record(brute_force, i++, "Pause");
 
     // Fast Backward
@@ -89,6 +93,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 93, &I_fast_backward_text_19x6);
+    button_panel_item_set_name(button_panel, i, "Fast backward");
     infrared_brute_force_add_record(brute_force, i++, "Fast_ba");
 
     // Fast Forward button
@@ -104,6 +109,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 39, 93, &I_fast_f_text_19x6);
+    button_panel_item_set_name(button_panel, i, "Fast forward");
     infrared_brute_force_add_record(brute_force, i++, "Fast_fo");
 
     // OK/Select Button
@@ -119,6 +125,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 6, 123, &I_ok_text_19x5);
+    button_panel_item_set_name(button_panel, i, "OK");
     infrared_brute_force_add_record(brute_force, i++, "Ok");
 
     // Subtitle/CC Button
@@ -134,6 +141,7 @@ void infrared_scene_universal_bluray_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 39, 123, &I_subtitle_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Subtitle");
     infrared_brute_force_add_record(brute_force, i++, "Subtitle");
 
     button_panel_add_label(button_panel, 1, 11, FontPrimary, "Blu-ray/DVD");

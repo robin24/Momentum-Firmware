@@ -23,6 +23,7 @@ void infrared_scene_universal_projector_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 46, &I_power_text_24x5);
+    button_panel_item_set_name(button_panel, i, "Power");
     infrared_brute_force_add_record(brute_force, i++, "Power");
     button_panel_add_item(
         button_panel,
@@ -36,6 +37,7 @@ void infrared_scene_universal_projector_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 39, 46, &I_mute_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Mute");
     infrared_brute_force_add_record(brute_force, i++, "Mute");
     button_panel_add_item(
         button_panel,
@@ -48,6 +50,7 @@ void infrared_scene_universal_projector_on_enter(void* context) {
         &I_volup_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Volume up");
     infrared_brute_force_add_record(brute_force, i++, "Vol_up");
 
     button_panel_add_item(
@@ -61,6 +64,7 @@ void infrared_scene_universal_projector_on_enter(void* context) {
         &I_voldown_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Volume down");
     infrared_brute_force_add_record(brute_force, i++, "Vol_dn");
     button_panel_add_item(
         button_panel,
@@ -73,6 +77,7 @@ void infrared_scene_universal_projector_on_enter(void* context) {
         &I_play_hover_19x20,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Play");
     infrared_brute_force_add_record(brute_force, i++, "Play");
     button_panel_add_icon(button_panel, 6, 80, &I_play_text_19x5);
     button_panel_add_item(
@@ -86,6 +91,7 @@ void infrared_scene_universal_projector_on_enter(void* context) {
         &I_pause_hover_19x20,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Pause");
     infrared_brute_force_add_record(brute_force, i++, "Pause");
     button_panel_add_icon(button_panel, 4, 109, &I_pause_text_23x5);
 

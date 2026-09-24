@@ -96,6 +96,15 @@ void desktop_view_locked_draw_lockscreen(Canvas* canvas, void* m) {
     if(!momentum_settings.lockscreen_transparent) {
         canvas_draw_icon(canvas, 0, 0 + y, &I_Lockscreen);
     }
+    // The lock and how to leave it are icons: the screen reader hears them. Not while the cover
+    // opens after an unlock, when the PIN flag is already cleared and the words would be wrong
+    if(model->view_state != DesktopViewLockedStateCoverOpening) {
+        canvas_tap_hint_note(
+            canvas,
+            model->pin_locked ? "Locked with PIN, press Up to enter it" :
+                                "Locked, press Back three times to unlock",
+            false);
+    }
     if(momentum_settings.lockscreen_time) {
         canvas_set_font(canvas, FontBigNumbers);
         canvas_draw_str(canvas, 0, 64 + y, time_str);

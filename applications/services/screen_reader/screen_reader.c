@@ -5,13 +5,15 @@
 #include <gui/gui_i.h>
 #include <gui/canvas_i.h>
 #include <input/input.h>
+#include <desktop/desktop.h>
 #include <momentum/settings.h>
 
 #define TAG "ScreenReader"
 
 #define SR_FLAG_FRAME     (1 << 0)
 #define SR_FLAG_COMMAND   (1 << 1)
-#define SR_FLAG_ALL       (SR_FLAG_FRAME | SR_FLAG_COMMAND)
+#define SR_FLAG_UNLOCKED  (1 << 2)
+#define SR_FLAG_ALL       (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_UNLOCKED)
 #define SR_SETTLE_MS      50
 #define SR_MAX_LATENCY_MS 300
 #define SR_KEY_RECENT_MS  500
@@ -45,6 +47,9 @@ struct ScreenReader {
     // thread, which takes it with an atomic exchange: the latest one wins, none runs twice
     SrChords chords;
     uint8_t pending_command;
+
+    // The desktop's lock state, for "Unlocked"; subscribed once the desktop record exists
+    FuriPubSubSubscription* desktop_subscription;
 };
 
 static void sr_lock(ScreenReader* sr) {
@@ -78,6 +83,7 @@ static void sr_text(const CanvasTapRecord* record, void* context) {
     r->font = record->font;
     r->inverted = record->inverted;
     r->focus = record->focus;
+    r->note = record->note;
     r->button = record->button;
     r->index = record->index;
     r->count = record->count;
@@ -147,6 +153,43 @@ static void sr_push_voice(ScreenReader* sr) {
     speech_set_voice_clips(sr->speech, momentum_settings.sr_voice);
 }
 
+// Desktop thread, from desktop_lock and desktop_unlock. Only desktop_unlock publishes locked
+// false, and only from the locked state, so each such message is the step from locked to
+// unlocked (also when the lock happened before the reader subscribed). The lock itself is said by
+// the lock screen's note
+static void sr_desktop_status_callback(const void* message, void* context) {
+    const DesktopStatus* status = message;
+    ScreenReader* sr = context;
+    if(!status->locked) furi_thread_flags_set(sr->thread_id, SR_FLAG_UNLOCKED);
+}
+
+// The desktop service starts before the reader but creates its record at the end of its setup,
+// so the service loop retries on every frame until the record is there
+static void sr_subscribe_desktop(ScreenReader* sr) {
+    if(sr->desktop_subscription || !furi_record_exists(RECORD_DESKTOP)) return;
+    Desktop* desktop = furi_record_open(RECORD_DESKTOP);
+    sr->desktop_subscription = furi_pubsub_subscribe(
+        desktop_api_get_status_pubsub(desktop), sr_desktop_status_callback, sr);
+}
+
+// "Unlocked", on the service thread, at once: a frame still settling is modelled after it. It
+// waits for what is being said rather than interrupting (the key that unlocked has silenced
+// speech already), and the "Home screen" that follows, when the lock screen's text goes away,
+// is queued behind it
+static void sr_say_unlocked(ScreenReader* sr) {
+    if(!momentum_settings.screen_reader) return;
+    sr_lock(sr);
+    SrAnnouncement* a = &sr->announcements[0];
+    a->kind = SrAnnLock;
+    a->interrupt = false;
+    strlcpy(a->text, "Unlocked", sizeof(a->text));
+    sr->stats.announcements++;
+    sr_push_voice(sr);
+    speech_say(sr->speech, a->text, false, false);
+    if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
+    sr_unlock(sr);
+}
+
 // Runs the model under the mutex (well under a millisecond) so that the console
 // commands never read a half written screen description.
 static void sr_process(ScreenReader* sr) {
@@ -158,9 +201,11 @@ static void sr_process(ScreenReader* sr) {
         uint32_t since_press = now - sr->last_press_tick;
         bool key_recent = since_press < SR_KEY_RECENT_MS;
         // The home screen keeps redrawing its dolphin speech bubbles, and they arrive as
-        // changes on the same screen. Without a key press in the last two seconds nobody asked
-        // for them, so they are not spoken; they still reach the console mirror, and "Home
-        // screen" on arrival is a different kind and stays
+        // changes on the same screen; when one vanishes, the desktop's text is gone and the
+        // model says "Home screen" without interrupting, as it does when the lock menu or a
+        // dialog of the desktop closes. Without a key press in the last two seconds nobody asked
+        // for either, so they are not spoken; they still reach the console mirror, and "Home
+        // screen" on arrival from another screen interrupts and stays
         bool quiet_desktop = sr->working.content_layer == SrLayerDesktop &&
                              since_press >= SR_DESKTOP_KEY_MS;
         sr->model.verbosity = momentum_settings.sr_verbosity;
@@ -169,7 +214,8 @@ static void sr_process(ScreenReader* sr) {
         sr->stats.frames++;
         for(size_t i = 0; i < n; i++) {
             const SrAnnouncement* a = &sr->announcements[i];
-            if(quiet_desktop && a->kind == SrAnnChange) {
+            bool unasked = a->kind == SrAnnChange || (a->kind == SrAnnHome && !a->interrupt);
+            if(quiet_desktop && unasked) {
                 sr->stats.suppressed++;
             } else {
                 sr->stats.announcements++;
@@ -323,6 +369,7 @@ int32_t screen_reader_srv(void* p) {
 
     sr->gui = furi_record_open(RECORD_GUI);
     gui_tap_set(sr->gui, &screen_reader_tap, sr);
+    sr_subscribe_desktop(sr);
 
     furi_record_create(RECORD_SCREEN_READER, sr);
     screen_reader_cli_register(sr);
@@ -343,6 +390,7 @@ int32_t screen_reader_srv(void* p) {
             sr_process(sr);
             continue;
         }
+        if(flags & SR_FLAG_UNLOCKED) sr_say_unlocked(sr);
         if(flags & SR_FLAG_COMMAND) {
             // A command reads the screen as it is now: a frame still settling is modelled first,
             // as the timeout would have done. With the reader turned off meanwhile it is dropped
@@ -354,6 +402,7 @@ int32_t screen_reader_srv(void* p) {
                 sr_run_command(sr, command);
             }
         } else if(flags & SR_FLAG_FRAME) {
+            sr_subscribe_desktop(sr);
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }

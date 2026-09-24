@@ -38,6 +38,7 @@ typedef struct ButtonItem {
     ButtonItemCallback callback;
     IconElement icon;
     void* callback_context;
+    const char* name; /**< spoken by the screen reader while selected, NULL if none */
 } ButtonItem;
 
 ARRAY_DEF(ButtonArray, ButtonItem*, M_PTR_OPLIST); // NOLINT
@@ -197,6 +198,24 @@ void button_panel_add_item(
             button_item->icon.name = icon_name;
             button_item->icon.name_selected = icon_name_selected;
             button_item->index = index;
+            button_item->name = NULL;
+        },
+        true);
+}
+
+void button_panel_item_set_name(ButtonPanel* button_panel, uint32_t index, const char* name) {
+    furi_check(button_panel);
+
+    with_view_model(
+        button_panel->view,
+        ButtonPanelModel * model,
+        {
+            for(size_t x = 0; x < model->reserve_x; ++x) {
+                for(size_t y = 0; y < model->reserve_y; ++y) {
+                    ButtonItem* button_item = *button_panel_get_item(model, x, y);
+                    if(button_item && button_item->index == index) button_item->name = name;
+                }
+            }
         },
         true);
 }
@@ -220,6 +239,7 @@ static void button_panel_view_draw_callback(Canvas* canvas, void* _model) {
             canvas_draw_icon(canvas, icon->x, icon->y, icon->name);
         }
 
+    const ButtonItem* selected_item = NULL;
     for(size_t x = 0; x < model->reserve_x; ++x) {
         for(size_t y = 0; y < model->reserve_y; ++y) {
             ButtonItem* button_item = *button_panel_get_item(model, x, y);
@@ -229,9 +249,15 @@ static void button_panel_view_draw_callback(Canvas* canvas, void* _model) {
             const Icon* icon_name = button_item->icon.name;
             if((model->selected_item_x == x) && (model->selected_item_y == y)) {
                 icon_name = button_item->icon.name_selected;
+                selected_item = button_item;
             }
             canvas_draw_icon(canvas, button_item->icon.x, button_item->icon.y, icon_name);
         }
+    }
+
+    // The buttons are icons: the screen reader hears the selected one's name as the focus
+    if(selected_item && selected_item->name) {
+        canvas_tap_hint_note(canvas, selected_item->name, true);
     }
 
     for

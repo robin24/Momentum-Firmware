@@ -120,9 +120,11 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         // A record only joins the row above it when it reads the same way. On the on screen
         // keyboard every key of a row shares one baseline, so the selected key is its own row.
         // Buttons and status items never join: the clock and the battery percentage sit a
-        // pixel apart on the status bar and are read as two items.
+        // pixel apart on the status bar and are read as two items. Notes never join either:
+        // they sit at y 0, where drawn text only passes by (the lock screen's sliding cover).
         SrRowKind kind = sr_record_row_kind(status, button, focus);
-        bool same_row = row && kind != SrRowButton && kind != SrRowStatus && row->kind == kind &&
+        bool same_row = row && !r->note && !row->note && kind != SrRowButton &&
+                        kind != SrRowStatus && row->kind == kind &&
                         (r->y - row->y) <= SR_ROW_Y_TOLERANCE &&
                         (row->y - r->y) <= SR_ROW_Y_TOLERANCE;
         if(!same_row) {
@@ -135,6 +137,7 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             row->x = r->x;
             row->y = r->y;
             row->font = r->font;
+            row->note = r->note;
             row->kind = kind;
             row->button = r->button;
         }
@@ -149,7 +152,8 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
 
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* c = &screen->rows[i];
-        if(c->kind == SrRowNormal && c->font == SrFontPrimary && c->y <= SR_TITLE_MAX_Y) {
+        if(c->kind == SrRowNormal && !c->note && c->font == SrFontPrimary &&
+           c->y <= SR_TITLE_MAX_Y) {
             screen->title_row = (int8_t)i;
             break;
         }
@@ -191,14 +195,36 @@ size_t sr_focus_with_position(const SrScreen* screen, char* out, size_t out_size
     return strlen(out);
 }
 
+static bool sr_row_is_battery(const SrRow* row) {
+    return row->kind == SrRowStatus && row->font == SrFontBatteryPercent;
+}
+
 size_t sr_status_text(const SrScreen* screen, char* out, size_t out_size) {
     if(out_size == 0) return 0;
     out[0] = '\0';
+    // The battery font draws only the charge's digits; the bar style draws them in two colours
+    // as two strings, so all of them make one number, said where the first one sits
+    char battery[16] = "";
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        if(sr_row_is_battery(&screen->rows[i])) {
+            sr_append(battery, sizeof(battery), screen->rows[i].text);
+        }
+    }
+    bool battery_said = false;
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* row = &screen->rows[i];
         if(row->kind != SrRowStatus) continue;
+        bool is_battery = sr_row_is_battery(row);
+        if(is_battery && battery_said) continue;
         if(out[0] != '\0') sr_append(out, out_size, ", ");
-        sr_append(out, out_size, row->text);
+        if(is_battery) {
+            battery_said = true;
+            sr_append(out, out_size, "battery ");
+            sr_append(out, out_size, battery);
+            sr_append(out, out_size, " percent");
+        } else {
+            sr_append(out, out_size, row->text);
+        }
     }
     return strlen(out);
 }
@@ -279,6 +305,14 @@ static bool sr_screen_has_text(const SrScreen* screen, const char* text) {
     for(uint8_t i = 0; i < screen->row_count; i++) {
         if(screen->rows[i].kind == SrRowStatus) continue;
         if(strcmp(screen->rows[i].text, text) == 0) return true;
+    }
+    return false;
+}
+
+/** Any row outside the status bar: text drawn by the screen, or a note. */
+static bool sr_screen_has_rows(const SrScreen* screen) {
+    for(uint8_t i = 0; i < screen->row_count; i++) {
+        if(screen->rows[i].kind != SrRowStatus) return true;
     }
     return false;
 }
@@ -370,8 +404,8 @@ size_t sr_model_process(
     char text[SR_ANN_TEXT_MAX];
     bool first = !model->have_prev;
     // The desktop keeps redrawing its dolphin and its speech bubbles. Staying on it is never
-    // a new screen, so bubble text arrives as a rate limited change and a bubble that vanishes
-    // says nothing at all.
+    // a new screen, so bubble text arrives as a rate limited change. The desktop's own screens
+    // (the lock menu, the lock screen, the PIN entry, the power off dialog) stay on it too.
     bool stay_on_desktop = !first && model->prev.content_layer == SrLayerDesktop &&
                            cur->content_layer == SrLayerDesktop;
     bool changed = !stay_on_desktop && (first || sr_screen_changed(&model->prev, cur));
@@ -383,6 +417,11 @@ size_t sr_model_process(
         } else if(cur->content_layer == SrLayerDesktop) {
             sr_emit(out, out_max, &n, SrAnnHome, true, "Home screen");
         }
+    } else if(stay_on_desktop && sr_screen_has_rows(&model->prev) && !sr_screen_has_rows(cur)) {
+        // Still on the desktop and its own text went away: one of its screens closed, or a
+        // bubble vanished. Home again, said once and after what is being said (an "Unlocked");
+        // the service keeps it silent without a recent key press, as it keeps the bubbles
+        sr_emit(out, out_max, &n, SrAnnHome, false, "Home screen");
     } else {
         char focus_now[SR_ANN_TEXT_MAX];
         char focus_was[SR_ANN_TEXT_MAX];

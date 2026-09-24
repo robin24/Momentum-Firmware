@@ -23,6 +23,7 @@ void infrared_scene_universal_digital_sign_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 46, &I_power_text_24x5);
+    button_panel_item_set_name(button_panel, i, "Power");
     infrared_brute_force_add_record(brute_force, i++, "POWER");
 
     button_panel_add_item(
@@ -37,6 +38,7 @@ void infrared_scene_universal_digital_sign_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 36, 46, &I_input_text_24x5);
+    button_panel_item_set_name(button_panel, i, "Input");
     infrared_brute_force_add_record(brute_force, i++, "SOURCE");
 
     button_panel_add_item(
@@ -51,6 +53,7 @@ void infrared_scene_universal_digital_sign_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 6, 80, &I_play_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Play");
     infrared_brute_force_add_record(brute_force, i++, "PLAY");
 
     button_panel_add_item(
@@ -65,6 +68,7 @@ void infrared_scene_universal_digital_sign_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 38, 80, &I_stop_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Stop");
     infrared_brute_force_add_record(brute_force, i++, "STOP");
 
     button_panel_add_label(button_panel, 1, 11, FontPrimary, "Digital Signs");

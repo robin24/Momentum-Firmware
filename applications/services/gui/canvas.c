@@ -204,6 +204,22 @@ void canvas_tap_note(Canvas* canvas, int32_t x, int32_t y, const char* text) {
     canvas_tap_text(canvas, x, y, text);
 }
 
+void canvas_tap_hint_note(Canvas* canvas, const char* text, bool focus) {
+    furi_check(canvas);
+    if(!text || !canvas->tap_callback) return;
+    // A record of its own on the layer being drawn, at x 0, y 0, in the secondary font and the
+    // normal colour. It is not drawn text: the pending glyph run and the hints waiting for the
+    // next drawn string stay as they are
+    CanvasTapRecord record;
+    memset(&record, 0, sizeof(record));
+    record.layer = canvas->tap_layer;
+    record.font = FontSecondary;
+    record.focus = focus;
+    record.note = true;
+    strlcpy(record.text, text, sizeof(record.text));
+    canvas->tap_callback(&record, canvas->tap_context);
+}
+
 void canvas_reset(Canvas* canvas) {
     furi_check(canvas);
 

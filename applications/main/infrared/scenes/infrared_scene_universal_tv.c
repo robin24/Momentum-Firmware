@@ -23,6 +23,7 @@ void infrared_scene_universal_tv_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 38, &I_power_text_24x5);
+    button_panel_item_set_name(button_panel, i, "Power");
     infrared_brute_force_add_record(brute_force, i++, "Power");
     button_panel_add_item(
         button_panel,
@@ -40,6 +41,7 @@ void infrared_scene_universal_tv_on_enter(void* context) {
     button_panel_add_icon(button_panel, 0, 66, &I_ch_text_31x34);
     button_panel_add_icon(button_panel, 35, 66, &I_vol_tv_text_29x34);
 
+    button_panel_item_set_name(button_panel, i, "Mute");
     infrared_brute_force_add_record(brute_force, i++, "Mute");
     button_panel_add_item(
         button_panel,
@@ -53,6 +55,7 @@ void infrared_scene_universal_tv_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
 
+    button_panel_item_set_name(button_panel, i, "Volume up");
     infrared_brute_force_add_record(brute_force, i++, "Vol_up");
     button_panel_add_item(
         button_panel,
@@ -65,6 +68,7 @@ void infrared_scene_universal_tv_on_enter(void* context) {
         &I_ch_up_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Channel up");
     infrared_brute_force_add_record(brute_force, i++, "Ch_next");
     button_panel_add_item(
         button_panel,
@@ -77,6 +81,7 @@ void infrared_scene_universal_tv_on_enter(void* context) {
         &I_voldown_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Volume down");
     infrared_brute_force_add_record(brute_force, i++, "Vol_dn");
     button_panel_add_item(
         button_panel,
@@ -89,6 +94,7 @@ void infrared_scene_universal_tv_on_enter(void* context) {
         &I_ch_down_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Channel down");
     infrared_brute_force_add_record(brute_force, i++, "Ch_prev");
 
     button_panel_add_label(button_panel, 22, 10, FontPrimary, "TVs");

@@ -1,5 +1,6 @@
 #include <furi.h>
 #include <gui/elements.h>
+#include <gui/canvas_i.h>
 #include <assets_icons.h>
 #include <momentum/momentum.h>
 #include <furi_hal_rtc.h>
@@ -26,6 +27,24 @@ typedef enum {
 
     DesktopLockMenuIndexTotalCount
 } DesktopLockMenuIndex;
+
+// The tiles are icons: the screen reader hears the selected one's name, a switch with its state
+static const char* const desktop_lock_menu_names[DesktopLockMenuIndexTotalCount] = {
+    [DesktopLockMenuIndexLefthandedMode] = "Left handed",
+    [DesktopLockMenuIndexSettings] = "Settings",
+    [DesktopLockMenuIndexDarkMode] = "Dark mode",
+    [DesktopLockMenuIndexLock] = "Lock",
+    [DesktopLockMenuIndexBluetooth] = "Bluetooth",
+    [DesktopLockMenuIndexMomentum] = "Momentum",
+    [DesktopLockMenuIndexBrightness] = "Brightness",
+    [DesktopLockMenuIndexVolume] = "Volume",
+};
+
+static const char* const desktop_lock_menu_popup_names[DesktopLockMenuPopupIndexMAX] = {
+    [DesktopLockMenuPopupIndexKeypad] = "Keypad Lock",
+    [DesktopLockMenuPopupIndexPinCode] = "PIN Code Lock",
+    [DesktopLockMenuPopupIndexPinOff] = "PIN Lock + OFF",
+};
 
 void desktop_lock_menu_set_callback(
     DesktopLockMenuView* lock_menu,
@@ -62,6 +81,35 @@ void desktop_lock_menu_set_idx(DesktopLockMenuView* lock_menu, uint8_t idx) {
         lock_menu->view, DesktopLockMenuViewModel * model, { model->idx = idx; }, true);
 }
 
+/** The selected tile for the screen reader: its name, "on" or "off" after a switch, the level
+ * after a slider ("Brightness 50"). */
+static void
+    desktop_lock_menu_tap_note(Canvas* canvas, const DesktopLockMenuViewModel* m, bool enabled) {
+    if(m->idx >= DesktopLockMenuIndexTotalCount) return;
+    const char* name = desktop_lock_menu_names[m->idx];
+    const NotificationSettings* settings = &m->lock_menu->notification->settings;
+    char note[32];
+    switch(m->idx) {
+    case DesktopLockMenuIndexLefthandedMode:
+    case DesktopLockMenuIndexDarkMode:
+    case DesktopLockMenuIndexBluetooth:
+        snprintf(note, sizeof(note), "%s %s", name, enabled ? "on" : "off");
+        break;
+    case DesktopLockMenuIndexBrightness:
+        snprintf(
+            note, sizeof(note), "%s %d", name, (int)(settings->display_brightness * 100.0f + 0.5f));
+        break;
+    case DesktopLockMenuIndexVolume:
+        snprintf(
+            note, sizeof(note), "%s %d", name, (int)(settings->speaker_volume * 100.0f + 0.5f));
+        break;
+    default:
+        strlcpy(note, name, sizeof(note));
+        break;
+    }
+    canvas_tap_hint_note(canvas, note, true);
+}
+
 void desktop_lock_menu_draw_callback(Canvas* canvas, void* model) {
     DesktopLockMenuViewModel* m = model;
 
@@ -71,6 +119,7 @@ void desktop_lock_menu_draw_callback(Canvas* canvas, void* model) {
     int8_t x, y, w, h;
     bool selected, toggle;
     bool enabled = false;
+    bool selected_enabled = false;
     uint8_t value = 0;
     int8_t total = 58;
     const Icon* icon = NULL;
@@ -126,6 +175,7 @@ void desktop_lock_menu_draw_callback(Canvas* canvas, void* model) {
         }
 
         if(selected) {
+            selected_enabled = enabled;
             elements_bold_rounded_frame(canvas, x - 1, y - 1, w + 1, h + 1);
         } else {
             canvas_draw_rframe(canvas, x, y, w, h, 5);
@@ -172,10 +222,22 @@ void desktop_lock_menu_draw_callback(Canvas* canvas, void* model) {
         }
         canvas_set_font(canvas, FontSecondary);
         elements_bold_rounded_frame(canvas, 24, 4, 80, 56);
-        canvas_draw_str_aligned(canvas, 64, 16, AlignCenter, AlignCenter, "Keypad Lock");
-        canvas_draw_str_aligned(canvas, 64, 32, AlignCenter, AlignCenter, "PIN Code Lock");
-        canvas_draw_str_aligned(canvas, 64, 48, AlignCenter, AlignCenter, "PIN Lock + OFF");
+        for(size_t i = 0; i < DesktopLockMenuPopupIndexMAX; i++) {
+            // A frame marks the choice, which the screen reader hears as the focus
+            if(i == m->lock_popup_index) {
+                canvas_tap_hint_focus(canvas, i + 1, DesktopLockMenuPopupIndexMAX);
+            }
+            canvas_draw_str_aligned(
+                canvas,
+                64,
+                16 + 16 * i,
+                AlignCenter,
+                AlignCenter,
+                desktop_lock_menu_popup_names[i]);
+        }
         elements_frame(canvas, 28, 8 + m->lock_popup_index * 16, 72, 15);
+    } else {
+        desktop_lock_menu_tap_note(canvas, m, selected_enabled);
     }
 }
 

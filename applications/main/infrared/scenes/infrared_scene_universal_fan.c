@@ -23,6 +23,7 @@ void infrared_scene_universal_fan_on_enter(void* context) {
         &I_power_hover_19x20,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Power");
     infrared_brute_force_add_record(brute_force, i++, "Power");
     button_panel_add_icon(button_panel, 4, 46, &I_power_text_24x5);
 
@@ -37,6 +38,7 @@ void infrared_scene_universal_fan_on_enter(void* context) {
         &I_mode_hover_19x20,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Mode");
     infrared_brute_force_add_record(brute_force, i++, "Mode");
     button_panel_add_icon(button_panel, 39, 46, &I_mode_text_20x5);
 
@@ -51,6 +53,7 @@ void infrared_scene_universal_fan_on_enter(void* context) {
         &I_volup_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Speed up");
     infrared_brute_force_add_record(brute_force, i++, "Speed_up");
     button_panel_add_item(
         button_panel,
@@ -63,6 +66,7 @@ void infrared_scene_universal_fan_on_enter(void* context) {
         &I_voldown_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Speed down");
     infrared_brute_force_add_record(brute_force, i++, "Speed_dn");
     button_panel_add_item(
         button_panel,
@@ -75,6 +79,7 @@ void infrared_scene_universal_fan_on_enter(void* context) {
         &I_rotate_hover_19x20,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Rotate");
     infrared_brute_force_add_record(brute_force, i++, "Rotate");
     button_panel_add_icon(button_panel, 4, 80, &I_rotate_text_24x5);
 
@@ -89,6 +94,7 @@ void infrared_scene_universal_fan_on_enter(void* context) {
         &I_timer_hover_19x20,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Timer");
     infrared_brute_force_add_record(brute_force, i++, "Timer");
     button_panel_add_icon(button_panel, 4, 109, &I_timer_text_23x5);
 

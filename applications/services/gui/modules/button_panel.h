@@ -77,6 +77,18 @@ void button_panel_add_item(
     ButtonItemCallback callback,
     void* callback_context);
 
+/** Name an item for the screen reader.
+ *
+ * The panel draws its items as icons only; while the item is selected, the screen reader reads
+ * its name as the focused item. Names every item added with this index.
+ *
+ * @param      button_panel  ButtonPanel instance
+ * @param      index         the index the item was added with
+ * @param      name          spoken name; it is not copied and must outlive the panel's items
+ *                           (a string literal), NULL removes the name
+ */
+void button_panel_item_set_name(ButtonPanel* button_panel, uint32_t index, const char* name);
+
 /** Get button_panel view.
  *
  * @param      button_panel  ButtonPanel instance

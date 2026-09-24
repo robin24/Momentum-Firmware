@@ -152,6 +152,12 @@ static void desktop_view_pin_input_draw(Canvas* canvas, void* context) {
     DesktopViewPinInputModel* model = context;
     desktop_view_pin_input_draw_cells(canvas, model);
 
+    // The cells are icons: the screen reader hears how many digits are in, never which
+    char note[24];
+    unsigned length = model->pin.length;
+    snprintf(note, sizeof(note), "%u digit%s entered", length, length == 1 ? "" : "s");
+    canvas_tap_hint_note(canvas, note, false);
+
     if((model->pin.length > 0) && !model->locked_input) {
         canvas_draw_icon(canvas, 4, 53, &I_Pin_back_arrow_10x8);
         canvas_draw_str(canvas, 16, 60, "= clear");

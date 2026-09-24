@@ -23,6 +23,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 35, &I_power_text_24x5);
+    button_panel_item_set_name(button_panel, i, "Power");
     infrared_brute_force_add_record(brute_force, i++, "Power");
     button_panel_add_item(
         button_panel,
@@ -36,6 +37,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 39, 35, &I_mute_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Mute");
     infrared_brute_force_add_record(brute_force, i++, "Mute");
     button_panel_add_item(
         button_panel,
@@ -49,6 +51,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 6, 64, &I_play_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Play");
     infrared_brute_force_add_record(brute_force, i++, "Play");
     button_panel_add_item(
         button_panel,
@@ -62,6 +65,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 4, 93, &I_pause_text_23x5);
+    button_panel_item_set_name(button_panel, i, "Pause");
     infrared_brute_force_add_record(brute_force, i++, "Pause");
     button_panel_add_item(
         button_panel,
@@ -75,6 +79,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 6, 123, &I_prev_text_19x5);
+    button_panel_item_set_name(button_panel, i, "Previous");
     infrared_brute_force_add_record(brute_force, i++, "Prev");
     button_panel_add_item(
         button_panel,
@@ -88,6 +93,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         infrared_scene_universal_common_item_callback,
         context);
     button_panel_add_icon(button_panel, 39, 123, &I_next_text_19x6);
+    button_panel_item_set_name(button_panel, i, "Next");
     infrared_brute_force_add_record(brute_force, i++, "Next");
     button_panel_add_item(
         button_panel,
@@ -100,6 +106,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         &I_voldown_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Volume down");
     infrared_brute_force_add_record(brute_force, i++, "Vol_dn");
     button_panel_add_item(
         button_panel,
@@ -112,6 +119,7 @@ void infrared_scene_universal_audio_on_enter(void* context) {
         &I_volup_hover_24x21,
         infrared_scene_universal_common_item_callback,
         context);
+    button_panel_item_set_name(button_panel, i, "Volume up");
     infrared_brute_force_add_record(brute_force, i++, "Vol_up");
 
     button_panel_add_label(button_panel, 18, 10, FontPrimary, "Audio");

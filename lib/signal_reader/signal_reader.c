@@ -47,6 +47,8 @@ struct SignalReader {
 
     SignalReaderCallback callback;
     void* context;
+
+    bool first_start_done; /**< the first start after alloc waited for the screen reader */
 };
 
 #define GPIO_PIN_MAP(pin, prefix)               \
@@ -80,6 +82,7 @@ SignalReader* signal_reader_alloc(const GpioPin* gpio_pin, uint32_t size) {
     instance->bitstream_buffer = malloc(size);
 
     instance->event.data = &instance->event_data;
+    instance->first_start_done = false;
 
     return instance;
 }
@@ -193,6 +196,14 @@ void signal_reader_start(SignalReader* instance, SignalReaderCallback callback, 
 
     // EXTI delay compensation
     instance->tim_cnt_compensation = 9;
+
+    // The first start after alloc is the start of an emulation, whose screen the screen reader
+    // announces right away: give it 400 ms to take the speaker for that announcement. The acquire
+    // below then waits until the announcement is played out; later starts do not wait
+    if(!instance->first_start_done) {
+        instance->first_start_done = true;
+        furi_delay_ms(400);
+    }
 
     // TIM16 is shared with the speaker, and the speaker mutex is its single owner token:
     // acquiring it enables the timer and parks the speaker pin on the timer's alternate

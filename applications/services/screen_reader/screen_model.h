@@ -50,6 +50,7 @@ typedef struct {
     uint8_t font;
     bool inverted; /**< drawn in white, i.e. on a filled box */
     bool focus; /**< a module marked this string as the focused item */
+    bool note; /**< not drawn: a view's words for what it shows as icons, at x 0, y 0 */
     uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
     uint16_t index; /**< 1-based position from the module, 0 if unknown */
     uint16_t count; /**< item count from the module, 0 if unknown */
@@ -71,12 +72,13 @@ typedef enum {
     SrRowStatus,
 } SrRowKind;
 
-/** Strings on one baseline, joined in reading order. */
+/** Strings on one baseline, joined in reading order. A note is a row of its own. */
 typedef struct {
     char text[SR_ROW_TEXT_MAX];
     int16_t x;
     int16_t y;
     uint8_t font;
+    bool note; /**< the row is a note, never the title */
     SrRowKind kind;
     uint8_t button; /**< button side hint of the first record, 0 if none */
     uint16_t index;
@@ -99,7 +101,10 @@ typedef enum {
     SrAnnScreen, /**< a different screen appeared */
     SrAnnChange, /**< some text on the same screen changed */
     SrAnnTyped, /**< a character was typed into a text field */
-    SrAnnHome, /**< the home screen with no text appeared */
+    SrAnnHome, /**< the home screen with no text appeared: interrupting when coming from another
+                    layer; not interrupting when the desktop's own text went away (one of its
+                    screens closed, or a bubble vanished) */
+    SrAnnLock, /**< the desktop was unlocked; the service's, never the model's */
 } SrAnnKind;
 
 typedef struct {
@@ -128,7 +133,8 @@ size_t sr_screen_focus_text(const SrScreen* screen, char* out, size_t out_size);
 /** Title, rows, focus with position, buttons, as one readable text. */
 size_t sr_screen_describe(const SrScreen* screen, char* out, size_t out_size);
 
-/** The status bar rows (clock, battery percentage) joined with ", ". Returns the length
+/** The status bar rows joined with ", ": the clock as drawn, the battery percentage as
+ *  "battery 75 percent" (its digits make one number even when drawn apart). Returns the length
  *  written, 0 when the status bar has no text. */
 size_t sr_status_text(const SrScreen* screen, char* out, size_t out_size);
 

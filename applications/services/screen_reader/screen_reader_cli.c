@@ -70,6 +70,8 @@ static const char* sr_kind_name(SrAnnKind kind) {
         return "typed";
     case SrAnnHome:
         return "home";
+    case SrAnnLock:
+        return "lock";
     default:
         return "?";
     }
@@ -104,13 +106,14 @@ static void sr_cli_screen(ScreenReader* sr) {
     for(size_t i = 0; i < frame->count; i++) {
         const SrRecord* r = &frame->records[i];
         printf(
-            "%-12s x=%3d y=%3d %-10s%s%s",
+            "%-12s x=%3d y=%3d %-10s%s%s%s",
             sr_layer_name(r->layer),
             (int)r->x,
             (int)r->y,
             sr_font_name(r->font),
             r->inverted ? " inverted" : "",
-            r->focus ? " FOCUS" : "");
+            r->focus ? " FOCUS" : "",
+            r->note ? " NOTE" : "");
         if(r->count) printf(" %u/%u", (unsigned)r->index, (unsigned)r->count);
         if(r->button) printf(" button=%s", sr_button_name(r->button));
         printf(" \"%s\"\r\n", r->text);
