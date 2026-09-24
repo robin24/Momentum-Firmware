@@ -4,7 +4,6 @@ void sr_chords_init(SrChords* s) {
     s->back_down = false;
     s->chord_used = false;
     s->long_pending = false;
-    s->back_down_ms = 0;
     s->chord_key = -1;
     s->ok_long_seen = false;
 }
@@ -31,6 +30,7 @@ SrChordCommand sr_chords_feed(
     uint32_t now_ms,
     bool* drop,
     bool* emit_long) {
+    (void)now_ms; // reserved, see the header
     *drop = false;
     *emit_long = false;
 
@@ -57,7 +57,6 @@ SrChordCommand sr_chords_feed(
             s->back_down = true;
             s->chord_used = false;
             s->long_pending = false;
-            s->back_down_ms = now_ms;
             return SrChordNone;
         case InputTypeLong:
             *drop = true; // delivered on release instead

@@ -53,9 +53,10 @@ void input_set_filter(InputFilterCallback callback, void* context) {
 
 // Every input event leaves through here so that the filter sees all of them: Press, Release and
 // Short from the service loop, Long and Repeat from the press timers on the timer service thread,
-// and the console's events. The timer service thread runs at a lower priority than the input
-// service, so a filter call there can be preempted by one from the service loop: the mutex keeps
-// the calls apart, and input_set_filter cannot swap the filter while it runs.
+// and the console's events. These threads can preempt one another whatever their priorities (the
+// timer service runs at 2, or at 31 while an app such as NFC or Bad USB raises it), so the mutex
+// serializes the filter calls, priority inheritance lending a waiting thread's priority to the
+// holder, and input_set_filter cannot swap the filter while it runs.
 void input_publish_event(FuriPubSub* pubsub, InputEvent* event) {
     furi_check(pubsub);
     furi_check(event);
