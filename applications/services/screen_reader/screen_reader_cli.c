@@ -176,7 +176,7 @@ static void sr_cli_status(ScreenReader* sr) {
     screen_reader_get_stats(sr, &stats);
     printf("enabled: %s\r\n", screen_reader_is_enabled(sr) ? "yes" : "no");
     printf(
-        "rate: %lu, volume: %lu, verbosity: %lu, change delay %lu ms\r\n",
+        "rate: %lu, volume: %lu, verbosity: %lu, change delay: %lu ms\r\n",
         (unsigned long)momentum_settings.sr_rate,
         (unsigned long)momentum_settings.sr_volume,
         (unsigned long)momentum_settings.sr_verbosity,

@@ -54,11 +54,15 @@ static void momentum_app_scene_accessibility_screen_reader_changed(VariableItem*
 
 static void momentum_app_scene_accessibility_voice_changed(VariableItem* item) {
     MomentumApp* app = variable_item_get_context(item);
-    // Do not rebuild the list from here: variable_item_list_process_left/right is
-    // still holding the very VariableItem this callback belongs to, and rebuilding
+    // Write the setting here, not in on_event: variable_item_list_process_left/right
+    // is still holding the very VariableItem this callback belongs to, and rebuilding
     // (variable_item_list_reset then re-add) would free it out from under that
-    // caller. Defer to on_event, which runs after process_left/right has returned
-    // all the way up to the view dispatcher's event loop.
+    // caller. Defer only the rebuild to on_event, which runs after process_left/right
+    // has returned all the way up to the view dispatcher's event loop.
+    bool value = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, value ? "Recorded" : "SAM");
+    momentum_settings.sr_voice = value;
+    app->save_settings = true;
     view_dispatcher_send_custom_event(app->view_dispatcher, VarItemListEventVoiceChanged);
 }
 
@@ -240,16 +244,11 @@ bool momentum_app_scene_accessibility_on_event(void* context, SceneManagerEvent 
 
     if(event.type == SceneManagerEventTypeCustom) {
         if(event.event == VarItemListEventVoiceChanged) {
-            // The list still has its pre-rebuild layout here: Voice sits at the same
-            // index in both (VarItemListIndexSamVoice == VarItemListIndexRecordedVoice),
-            // and process_left/right already applied the new value index before
-            // calling the change callback that sent this event.
-            VariableItem* item =
-                variable_item_list_get(app->var_item_list, VarItemListIndexSamVoice);
-            bool recorded = variable_item_get_current_value_index(item);
-            momentum_settings.sr_voice = recorded;
-            app->save_settings = true;
-
+            // The change callback already wrote momentum_settings.sr_voice (and
+            // set save_settings); just rebuild for the new layout. Voice sits at
+            // the same index in both (VarItemListIndexSamVoice ==
+            // VarItemListIndexRecordedVoice), so this only reads the setting back.
+            bool recorded = momentum_settings.sr_voice;
             uint8_t voice_index = recorded ? VarItemListIndexRecordedVoice :
                                              VarItemListIndexSamVoice;
             momentum_app_scene_accessibility_build_list(app, voice_index);

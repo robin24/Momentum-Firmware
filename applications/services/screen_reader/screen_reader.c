@@ -313,9 +313,10 @@ static void sr_process(ScreenReader* sr) {
 
 // A held change whose time has come, on the service thread, once no frame is settling (a newer
 // frame's text or its own announcement would cut the change off). The desktop's quiet rules are
-// applied again now: a change held while a key was recent, due when the desktop has gone quiet,
-// is dropped and counted as suppressed, unsaid and unmirrored. Otherwise it is said as a change
-// is, after what is being said and replacing a change still waiting
+// applied again now: a change is held when the last key is between 0.5 and 2 s old and comes
+// due after the desktop window (a change within 500 ms of a key is forced); it is then dropped
+// and counted as suppressed, unsaid and unmirrored. Otherwise it is said as a change is, after
+// what is being said and replacing a change still waiting
 static void sr_say_held_change(ScreenReader* sr) {
     if(!sr->throttle.pending) return;
     uint32_t now = furi_get_tick();
