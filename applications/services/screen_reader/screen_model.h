@@ -104,7 +104,7 @@ typedef enum {
     SrAnnHome, /**< the home screen with no text appeared: interrupting when coming from another
                     layer; not interrupting when the desktop's own text went away (one of its
                     screens closed, or a bubble vanished) */
-    SrAnnLock, /**< the desktop was unlocked; the service's, never the model's */
+    SrAnnLock, /**< the desktop locked or unlocked; the service's, never the model's */
 } SrAnnKind;
 
 typedef struct {

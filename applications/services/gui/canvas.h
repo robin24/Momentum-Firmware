@@ -487,9 +487,10 @@ void canvas_draw_rbox(
 /** Tell the screen reader what an icon-only view shows, as if it were drawn text.
  *
  * Nothing is drawn. Call it from a draw callback: the text becomes a row of the screen the
- * reader describes, the focused item when focus is true (for example the name of the selected
- * icon button), otherwise a normal row. A note is never the screen's title and has no position:
- * it is read before the text drawn on the screen. Does nothing while no screen reader listens.
+ * reader describes. A note has no position and is never the screen's title, which is read first.
+ * A plain note is read after the title and before the screen's other rows; with focus true the
+ * note is the focused item (for example the name of the selected icon button) and is read where
+ * the focus is read. Does nothing while no screen reader listens.
  *
  * @param      canvas  Canvas instance
  * @param      text    the words, copied at once (up to 47 characters are kept)

@@ -2,6 +2,7 @@
 #include "screen_reader_cli.h"
 
 #include <furi.h>
+#include <furi_hal_rtc.h>
 #include <gui/gui_i.h>
 #include <gui/canvas_i.h>
 #include <input/input.h>
@@ -10,14 +11,21 @@
 
 #define TAG "ScreenReader"
 
-#define SR_FLAG_FRAME     (1 << 0)
-#define SR_FLAG_COMMAND   (1 << 1)
-#define SR_FLAG_UNLOCKED  (1 << 2)
-#define SR_FLAG_ALL       (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_UNLOCKED)
-#define SR_SETTLE_MS      50
-#define SR_MAX_LATENCY_MS 300
-#define SR_KEY_RECENT_MS  500
-#define SR_DESKTOP_KEY_MS 2000
+#define SR_FLAG_FRAME      (1 << 0)
+#define SR_FLAG_COMMAND    (1 << 1)
+#define SR_FLAG_UNLOCKED   (1 << 2)
+#define SR_FLAG_LOCKED     (1 << 3)
+#define SR_FLAG_LOCKED_PIN (1 << 4)
+#define SR_FLAG_LOCK_ANY   (SR_FLAG_UNLOCKED | SR_FLAG_LOCKED | SR_FLAG_LOCKED_PIN)
+#define SR_FLAG_ALL        (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_LOCK_ANY)
+#define SR_SETTLE_MS       50
+#define SR_MAX_LATENCY_MS  300
+#define SR_KEY_RECENT_MS   500
+#define SR_DESKTOP_KEY_MS  2000
+
+// The lock screen's own words (desktop_view_locked.c), said when the desktop locks
+#define SR_LOCKED_TEXT     "Locked, press Back three times to unlock"
+#define SR_LOCKED_PIN_TEXT "Locked with PIN, press Up to enter it"
 
 struct ScreenReader {
     FuriThreadId thread_id;
@@ -48,8 +56,11 @@ struct ScreenReader {
     SrChords chords;
     uint8_t pending_command;
 
-    // The desktop's lock state, for "Unlocked"; subscribed once the desktop record exists
+    // The desktop's lock state, for "Locked" and "Unlocked"; subscribed once the desktop record
+    // exists. The service thread alone keeps the time of the last lock announcement
     FuriPubSubSubscription* desktop_subscription;
+    bool lock_said;
+    uint32_t lock_said_tick;
 };
 
 static void sr_lock(ScreenReader* sr) {
@@ -155,12 +166,17 @@ static void sr_push_voice(ScreenReader* sr) {
 
 // Desktop thread, from desktop_lock and desktop_unlock. Only desktop_unlock publishes locked
 // false, and only from the locked state, so each such message is the step from locked to
-// unlocked (also when the lock happened before the reader subscribed). The lock itself is said by
-// the lock screen's note
+// unlocked (also when the lock happened before the reader subscribed). desktop_lock sets the RTC
+// lock flag for a PIN lock before it publishes, and the lock screen reads the same flag for its
+// words, so the flag is read here, when the lock happens
 static void sr_desktop_status_callback(const void* message, void* context) {
     const DesktopStatus* status = message;
     ScreenReader* sr = context;
-    if(!status->locked) furi_thread_flags_set(sr->thread_id, SR_FLAG_UNLOCKED);
+    uint32_t flag = SR_FLAG_UNLOCKED;
+    if(status->locked) {
+        flag = furi_hal_rtc_is_flag_set(FuriHalRtcFlagLock) ? SR_FLAG_LOCKED_PIN : SR_FLAG_LOCKED;
+    }
+    furi_thread_flags_set(sr->thread_id, flag);
 }
 
 // The desktop service starts before the reader but creates its record at the end of its setup,
@@ -172,20 +188,25 @@ static void sr_subscribe_desktop(ScreenReader* sr) {
         desktop_api_get_status_pubsub(desktop), sr_desktop_status_callback, sr);
 }
 
-// "Unlocked", on the service thread, at once: a frame still settling is modelled after it. It
-// waits for what is being said rather than interrupting (the key that unlocked has silenced
-// speech already), and the "Home screen" that follows, when the lock screen's text goes away,
-// is queued behind it
-static void sr_say_unlocked(ScreenReader* sr) {
+// The desktop locked or unlocked, on the service thread, at once: a frame still settling is
+// modelled after it. Never kept quiet like the desktop's own changes: an auto lock comes without
+// a key press. A lock interrupts what is being said. "Unlocked" waits for it instead (the key
+// that unlocked has silenced speech already), and the "Home screen" that follows, when the lock
+// screen's text goes away, is queued behind it
+static void sr_say_lock(ScreenReader* sr, const char* text, bool locked) {
     if(!momentum_settings.screen_reader) return;
     sr_lock(sr);
     SrAnnouncement* a = &sr->announcements[0];
     a->kind = SrAnnLock;
-    a->interrupt = false;
-    strlcpy(a->text, "Unlocked", sizeof(a->text));
+    a->interrupt = locked;
+    strlcpy(a->text, text, sizeof(a->text));
     sr->stats.announcements++;
+    if(locked) {
+        sr->lock_said = true;
+        sr->lock_said_tick = furi_get_tick();
+    }
     sr_push_voice(sr);
-    speech_say(sr->speech, a->text, false, false);
+    speech_say(sr->speech, a->text, a->interrupt, false);
     if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
     sr_unlock(sr);
 }
@@ -206,8 +227,16 @@ static void sr_process(ScreenReader* sr) {
         // dialog of the desktop closes. Without a key press in the last two seconds nobody asked
         // for either, so they are not spoken; they still reach the console mirror, and "Home
         // screen" on arrival from another screen interrupts and stays
-        bool quiet_desktop = sr->working.content_layer == SrLayerDesktop &&
-                             since_press >= SR_DESKTOP_KEY_MS;
+        bool on_desktop = sr->working.content_layer == SrLayerDesktop;
+        bool quiet_desktop = on_desktop && since_press >= SR_DESKTOP_KEY_MS;
+        // The lock announcement has said what the lock screen shows. Until a key is pressed, or
+        // for two seconds, the desktop says nothing more: the lock screen arriving under its
+        // sliding cover, the dolphin's bubbles drawn behind the cover, and a frame of the menu
+        // that locked, drawn before the lock screen but modelled after the announcement (the
+        // lock menu's "Lock" tile as its popup closes), whose focus would cut it off
+        uint32_t since_lock = now - sr->lock_said_tick;
+        bool after_lock = on_desktop && sr->lock_said && since_lock < SR_DESKTOP_KEY_MS &&
+                          since_press >= since_lock;
         sr->model.verbosity = momentum_settings.sr_verbosity;
         size_t n = sr_model_process(
             &sr->model, &sr->working, now, key_recent, sr->announcements, SR_MAX_ANNOUNCEMENTS);
@@ -215,7 +244,7 @@ static void sr_process(ScreenReader* sr) {
         for(size_t i = 0; i < n; i++) {
             const SrAnnouncement* a = &sr->announcements[i];
             bool unasked = a->kind == SrAnnChange || (a->kind == SrAnnHome && !a->interrupt);
-            if(quiet_desktop && unasked) {
+            if((quiet_desktop && unasked) || after_lock) {
                 sr->stats.suppressed++;
             } else {
                 sr->stats.announcements++;
@@ -390,7 +419,10 @@ int32_t screen_reader_srv(void* p) {
             sr_process(sr);
             continue;
         }
-        if(flags & SR_FLAG_UNLOCKED) sr_say_unlocked(sr);
+        // A lock before an unlock, should both arrive at once
+        if(flags & SR_FLAG_LOCKED_PIN) sr_say_lock(sr, SR_LOCKED_PIN_TEXT, true);
+        if(flags & SR_FLAG_LOCKED) sr_say_lock(sr, SR_LOCKED_TEXT, true);
+        if(flags & SR_FLAG_UNLOCKED) sr_say_lock(sr, "Unlocked", false);
         if(flags & SR_FLAG_COMMAND) {
             // A command reads the screen as it is now: a frame still settling is modelled first,
             // as the timeout would have done. With the reader turned off meanwhile it is dropped

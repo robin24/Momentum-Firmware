@@ -123,6 +123,14 @@ void desktop_view_locked_draw_lockscreen(Canvas* canvas, void* m) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 0, 48 + y + 16 * !momentum_settings.lockscreen_time, date_str);
     }
+    if(model->view_state == DesktopViewLockedStateLockedHintShown) {
+        // A key was pressed while locked: the screen reader says which key unlocks, which the
+        // prompt below shows as an icon, and says it with the prompt turned off as well
+        canvas_tap_hint_note(
+            canvas,
+            model->pin_locked ? "Press Up to enter the PIN" : "Press Back three times to unlock",
+            false);
+    }
     if(model->view_state == DesktopViewLockedStateLockedHintShown &&
        momentum_settings.lockscreen_prompt) {
         canvas_set_font(canvas, FontSecondary);

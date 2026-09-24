@@ -22,7 +22,8 @@ typedef struct {
     uint32_t dropped_frames; /**< frames the GUI could not hand over in time */
     uint32_t announcements; /**< announcements handed to speech */
     uint32_t suppressed; /**< home screen changes, and its text going away, not spoken: no key
-                              press within 2 s */
+                              press within 2 s, or the lock screen arriving just after the lock
+                              was announced */
 } ScreenReaderStats;
 
 /** Copy the last captured frame (raw records). */
