@@ -30,6 +30,10 @@ bool sr_throttle_offer(SrThrottle* t, const char* text, uint32_t now_ms, uint32_
     return false;
 }
 
+void sr_throttle_force(SrThrottle* t, uint32_t now_ms) {
+    sr_throttle_said(t, now_ms);
+}
+
 bool sr_throttle_due(
     SrThrottle* t,
     uint32_t now_ms,

@@ -9,6 +9,11 @@
 
 #define ASSET_PACKS_NAME_LEN 32
 
+// Screen reader change delay in milliseconds: a same-screen change is said at most once per delay
+#define SR_CHANGE_MS_MIN     500
+#define SR_CHANGE_MS_MAX     10000
+#define SR_CHANGE_MS_DEFAULT 3000
+
 typedef enum {
     BatteryIconOff,
     BatteryIconBar,

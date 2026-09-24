@@ -23,7 +23,8 @@ typedef struct {
     uint32_t announcements; /**< announcements handed to speech */
     uint32_t suppressed; /**< desktop announcements not spoken: its changes, and its text going
                               away, with no key press within 2 s; and for 2 s after a lock
-                              announcement, or until a key press, every desktop announcement */
+                              announcement, or until a key press, every desktop announcement;
+                              and held changes due after the desktop went quiet */
 } ScreenReaderStats;
 
 /** Copy the last captured frame (raw records). */

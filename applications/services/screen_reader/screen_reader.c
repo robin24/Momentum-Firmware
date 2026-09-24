@@ -53,6 +53,9 @@ struct ScreenReader {
     FuriPubSub* input_events;
     FuriPubSubSubscription* input_subscription;
     volatile uint32_t last_press_tick;
+    // Set by the input callback on every key press, taken by the service thread: a key press
+    // drops a held change, whose text the key is about to change
+    bool key_pressed;
 
     // Chords: the state belongs to the input filter. A command waits here for the service
     // thread, which takes it with an atomic exchange: the latest one wins, none runs twice
@@ -138,6 +141,7 @@ static void sr_input_callback(const void* value, void* context) {
     ScreenReader* sr = context;
     if(event->type == InputTypePress) {
         sr->last_press_tick = furi_get_tick();
+        __atomic_store_n(&sr->key_pressed, true, __ATOMIC_SEQ_CST);
         // Any key silences speech. speech_stop retires the queue under the speech mutex (its
         // users hold it for microseconds) and wakes the worker; this callback runs on the
         // input service thread, not in an interrupt, and the stop lands before the app has
@@ -205,11 +209,48 @@ static void sr_subscribe_desktop(ScreenReader* sr) {
         desktop_api_get_status_pubsub(desktop), sr_desktop_status_callback, sr);
 }
 
+// Every announcement that is said goes through here, with the mutex held: counted, said while
+// the reader is on (with the voice as saved), and mirrored to the console. It interrupts what is
+// being said when it asks to; a change on the same screen waits its turn instead and replaces a
+// change still waiting
+static void sr_announce(ScreenReader* sr, const SrAnnouncement* a) {
+    sr->stats.announcements++;
+    if(momentum_settings.screen_reader) {
+        sr_push_voice(sr);
+        speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
+    }
+    if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
+}
+
+// The desktop's quiet rules, for an announcement on a screen of this layer at now, since_press
+// after the last key press; unasked is a change or the desktop's text going away. The home
+// screen keeps redrawing its dolphin speech bubbles, and they arrive as changes on the same
+// screen; when one vanishes, the desktop's text is gone and the model says "Home screen" without
+// interrupting, as it does when the lock menu or a dialog of the desktop closes. Without a key
+// press in the last two seconds nobody asked for either, so they are not spoken; "Home screen"
+// on arrival from another screen interrupts and stays. And the lock announcement has said what
+// the lock screen shows: until a key is pressed, or for two seconds, the desktop says nothing
+// more: the lock screen arriving under its sliding cover, the dolphin's bubbles drawn behind the
+// cover, and a frame of the menu that locked, drawn before the lock screen but modelled after
+// the announcement (the lock menu's "Lock" tile as its popup closes), whose focus would cut it
+// off
+static bool sr_quiet(
+    const ScreenReader* sr,
+    uint32_t now,
+    uint32_t since_press,
+    uint8_t layer,
+    bool unasked) {
+    if(layer != SrLayerDesktop) return false;
+    uint32_t since_lock = now - sr->lock_said_tick;
+    bool after_lock = sr->lock_said && since_lock < SR_DESKTOP_KEY_MS && since_press >= since_lock;
+    return (unasked && since_press >= SR_DESKTOP_KEY_MS) || after_lock;
+}
+
 // The desktop locked or unlocked, on the service thread, at once: a frame still settling is
 // modelled after it. Never kept quiet like the desktop's own changes: an auto lock comes without
 // a key press. A lock interrupts what is being said. "Unlocked" waits for it instead (the key
 // that unlocked has silenced speech already), and the "Home screen" that follows, when the lock
-// screen's text goes away, is queued behind it
+// screen's text goes away, is queued behind it. A held change is dropped
 static void sr_say_lock(ScreenReader* sr, const char* text, bool locked) {
     if(!momentum_settings.screen_reader) return;
     sr_lock(sr);
@@ -217,15 +258,12 @@ static void sr_say_lock(ScreenReader* sr, const char* text, bool locked) {
     a->kind = SrAnnLock;
     a->interrupt = locked;
     strlcpy(a->text, text, sizeof(a->text));
-    sr->stats.announcements++;
     if(locked) {
         sr->lock_said = true;
         sr->lock_said_tick = furi_get_tick();
     }
     sr_throttle_clear(&sr->throttle);
-    sr_push_voice(sr);
-    speech_say(sr->speech, a->text, a->interrupt, false);
-    if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
+    sr_announce(sr, a);
     sr_unlock(sr);
 }
 
@@ -239,22 +277,6 @@ static void sr_process(ScreenReader* sr) {
         uint32_t now = furi_get_tick();
         uint32_t since_press = now - sr->last_press_tick;
         bool key_recent = since_press < SR_KEY_RECENT_MS;
-        // The home screen keeps redrawing its dolphin speech bubbles, and they arrive as
-        // changes on the same screen; when one vanishes, the desktop's text is gone and the
-        // model says "Home screen" without interrupting, as it does when the lock menu or a
-        // dialog of the desktop closes. Without a key press in the last two seconds nobody asked
-        // for either, so they are not spoken; they still reach the console mirror, and "Home
-        // screen" on arrival from another screen interrupts and stays
-        bool on_desktop = sr->working.content_layer == SrLayerDesktop;
-        bool quiet_desktop = on_desktop && since_press >= SR_DESKTOP_KEY_MS;
-        // The lock announcement has said what the lock screen shows. Until a key is pressed, or
-        // for two seconds, the desktop says nothing more: the lock screen arriving under its
-        // sliding cover, the dolphin's bubbles drawn behind the cover, and a frame of the menu
-        // that locked, drawn before the lock screen but modelled after the announcement (the
-        // lock menu's "Lock" tile as its popup closes), whose focus would cut it off
-        uint32_t since_lock = now - sr->lock_said_tick;
-        bool after_lock = on_desktop && sr->lock_said && since_lock < SR_DESKTOP_KEY_MS &&
-                          since_press >= since_lock;
         sr->model.verbosity = momentum_settings.sr_verbosity;
         size_t n = sr_model_process(
             &sr->model, &sr->working, now, key_recent, sr->announcements, SR_MAX_ANNOUNCEMENTS);
@@ -262,54 +284,52 @@ static void sr_process(ScreenReader* sr) {
         for(size_t i = 0; i < n; i++) {
             const SrAnnouncement* a = &sr->announcements[i];
             bool unasked = a->kind == SrAnnChange || (a->kind == SrAnnHome && !a->interrupt);
-            if((quiet_desktop && unasked) || after_lock) {
+            if(sr_quiet(sr, now, since_press, sr->working.content_layer, unasked)) {
+                // Not said, and neither is a change held from before: the screen it came from
+                // has moved on. The console mirror still gets it
+                sr_throttle_clear(&sr->throttle);
                 sr->stats.suppressed++;
-            } else if(
-                a->kind == SrAnnChange &&
-                !sr_throttle_offer(&sr->throttle, a->text, now, momentum_settings.sr_change_ms)) {
-                // Held: a change came within the change delay of the last one said. The loop
-                // says the latest when its time comes (sr_say_held_change), unless another
-                // announcement drops it first; the console mirror gets it when it is said
+                if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
                 continue;
-            } else {
-                // A new screen, focus, home, typed character or lock supersedes a held change
-                if(a->kind != SrAnnChange) sr_throttle_clear(&sr->throttle);
-                sr->stats.announcements++;
-                if(momentum_settings.screen_reader) {
-                    // Screen and focus announcements interrupt what is being said; a change
-                    // on the same screen waits its turn and replaces a change still waiting
-                    sr_push_voice(sr);
-                    speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
-                }
             }
-            if(sr->watch_queue) {
-                furi_message_queue_put(sr->watch_queue, a, 0);
+            if(a->kind != SrAnnChange) {
+                // A new screen, focus, home or typed character supersedes a held change
+                sr_throttle_clear(&sr->throttle);
+            } else if(key_recent) {
+                // A key's own change is said at once; the next change is spaced from it
+                sr_throttle_force(&sr->throttle, now);
+            } else if(!sr_throttle_offer(
+                          &sr->throttle, a->text, now, momentum_settings.sr_change_ms)) {
+                // Held: it came within the change delay of the last change said. The loop says
+                // the latest when its time comes (sr_say_held_change), unless another
+                // announcement or a key press drops it first; the mirror gets it when it is said
+                continue;
             }
+            sr_announce(sr, a);
         }
     }
     sr_unlock(sr);
 }
 
-// A held change whose time has come, on the service thread: said as a change is, after what is
-// being said and replacing a change still waiting, and mirrored to the console
+// A held change whose time has come, on the service thread, once no frame is settling (a newer
+// frame's text or its own announcement would cut the change off). The desktop's quiet rules are
+// applied again now: a change held while a key was recent, due when the desktop has gone quiet,
+// is dropped and counted as suppressed, unsaid and unmirrored. Otherwise it is said as a change
+// is, after what is being said and replacing a change still waiting
 static void sr_say_held_change(ScreenReader* sr) {
     if(!sr->throttle.pending) return;
+    uint32_t now = furi_get_tick();
+    if(sr_throttle_wait_ms(&sr->throttle, now, momentum_settings.sr_change_ms) > 0) return;
     sr_lock(sr);
     SrAnnouncement* a = &sr->announcements[0];
-    if(sr_throttle_due(
-           &sr->throttle,
-           furi_get_tick(),
-           momentum_settings.sr_change_ms,
-           a->text,
-           sizeof(a->text))) {
+    if(sr_quiet(sr, now, now - sr->last_press_tick, sr->model.prev.content_layer, true)) {
+        sr_throttle_clear(&sr->throttle);
+        sr->stats.suppressed++;
+    } else if(sr_throttle_due(
+                  &sr->throttle, now, momentum_settings.sr_change_ms, a->text, sizeof(a->text))) {
         a->kind = SrAnnChange;
         a->interrupt = false;
-        sr->stats.announcements++;
-        if(momentum_settings.screen_reader) {
-            sr_push_voice(sr);
-            speech_say(sr->speech, a->text, false, true);
-        }
-        if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
+        sr_announce(sr, a);
     }
     sr_unlock(sr);
 }
@@ -462,23 +482,24 @@ int32_t screen_reader_srv(void* p) {
     bool pending = false;
     uint32_t pending_since = 0;
     while(true) {
-        uint32_t frame_timeout = FuriWaitForever;
+        uint32_t timeout = FuriWaitForever;
         if(pending) {
             uint32_t waited = furi_get_tick() - pending_since;
-            frame_timeout = waited >= SR_MAX_LATENCY_MS ? 0 : SR_SETTLE_MS;
-        }
-        // A held change wakes the loop when its time comes, at once when it is due already
-        uint32_t timeout = frame_timeout;
-        if(sr->throttle.pending) {
-            uint32_t wait = sr_throttle_wait_ms(
+            timeout = waited >= SR_MAX_LATENCY_MS ? 0 : SR_SETTLE_MS;
+        } else if(sr->throttle.pending) {
+            // A held change wakes the loop when its time comes, at once when it is due already;
+            // while a frame settles, it waits for the frame to be modelled
+            timeout = sr_throttle_wait_ms(
                 &sr->throttle, furi_get_tick(), momentum_settings.sr_change_ms);
-            if(wait < timeout) timeout = wait;
         }
         uint32_t flags = furi_thread_flags_wait(SR_FLAG_ALL, FuriFlagWaitAny, timeout);
+        // A key press drops a held change before the frame the key causes is modelled
+        if(__atomic_exchange_n(&sr->key_pressed, false, __ATOMIC_SEQ_CST)) {
+            sr_throttle_clear(&sr->throttle);
+        }
         if(flags & FuriFlagError) {
-            // Timeout: the screen has settled, or waited long enough. A frame still settling
-            // when a held change woke the loop settles on
-            if(pending && timeout == frame_timeout) {
+            // Timeout: the screen has settled, or waited long enough; or a held change is due
+            if(pending) {
                 pending = false;
                 sr_process(sr);
             }
@@ -504,7 +525,7 @@ int32_t screen_reader_srv(void* p) {
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }
-        sr_say_held_change(sr);
+        if(!pending) sr_say_held_change(sr);
     }
     return 0;
 }

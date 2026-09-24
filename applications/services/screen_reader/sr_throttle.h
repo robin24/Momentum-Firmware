@@ -33,6 +33,11 @@ void sr_throttle_init(SrThrottle* t);
  *  is cut at SR_ANN_TEXT_MAX - 1 characters. An interval of 0 says every change at once. */
 bool sr_throttle_offer(SrThrottle* t, const char* text, uint32_t now_ms, uint32_t interval_ms);
 
+/** A change said at once whatever the delay, as a key's own change is: now_ms is recorded as the
+ *  time the last change was said, so the next change is spaced from it, and a change still held
+ *  from before is dropped. */
+void sr_throttle_force(SrThrottle* t, uint32_t now_ms);
+
 /** True when a held change's time has come: its text is copied to out (cut to fit and
  *  terminated), it is no longer held, and now_ms is recorded as the time the last change was
  *  said. False when nothing is held or its time has not come; out is then left alone. */
@@ -48,7 +53,8 @@ bool sr_throttle_due(
 uint32_t sr_throttle_wait_ms(const SrThrottle* t, uint32_t now_ms, uint32_t interval_ms);
 
 /** Drop the held change: a new screen, a focus, the home screen, a lock or a typed character
- *  supersedes it. The time the last change was said is kept. */
+ *  supersedes it, a key press is about to change what it says, and a suppressed announcement
+ *  means the screen went quiet. The time the last change was said is kept. */
 void sr_throttle_clear(SrThrottle* t);
 
 #ifdef __cplusplus

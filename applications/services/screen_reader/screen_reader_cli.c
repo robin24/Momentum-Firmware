@@ -88,8 +88,10 @@ static void sr_cli_usage(void) {
     printf("  rate <n>     SAM speed 40..120, bigger is slower (saved)\r\n");
     printf("  volume <n>   0..100 (saved)\r\n");
     printf(
-        "  delay <ms>   change delay 500..3000: a same-screen change is said at most once per\r\n"
-        "               delay, the latest (saved)\r\n");
+        "  delay <ms>   change delay %d..%d: a same-screen change is said at most once per\r\n"
+        "               delay, the latest (saved)\r\n",
+        SR_CHANGE_MS_MIN,
+        SR_CHANGE_MS_MAX);
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
         "  voice on|off|status  recorded word clips from the card, spelled letters for the rest (saved)\r\n");
@@ -319,9 +321,12 @@ static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
 // The reader reads the setting at every change, so the new delay applies from the next one on
 static void sr_cli_delay(FuriString* args) {
     int value = 0;
-    if(!args_read_int_and_trim(args, &value) || value < 500 || value > 3000) {
+    if(!args_read_int_and_trim(args, &value) || value < SR_CHANGE_MS_MIN ||
+       value > SR_CHANGE_MS_MAX) {
         printf(
-            "expected a number of milliseconds from 500 to 3000; the change delay is %lu ms\r\n",
+            "expected a number of milliseconds from %d to %d; the change delay is %lu ms\r\n",
+            SR_CHANGE_MS_MIN,
+            SR_CHANGE_MS_MAX,
             (unsigned long)momentum_settings.sr_change_ms);
         return;
     }

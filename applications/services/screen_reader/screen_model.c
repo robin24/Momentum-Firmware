@@ -407,8 +407,9 @@ size_t sr_model_process(
     char text[SR_ANN_TEXT_MAX];
     bool first = !model->have_prev;
     // The desktop keeps redrawing its dolphin and its speech bubbles. Staying on it is never
-    // a new screen, so bubble text arrives as a rate limited change. The desktop's own screens
-    // (the lock menu, the lock screen, the PIN entry, the power off dialog) stay on it too.
+    // a new screen, so bubble text arrives as a change, which the service keeps quiet without a
+    // recent key and spaces by the change delay. The desktop's own screens (the lock menu, the
+    // lock screen, the PIN entry, the power off dialog) stay on it too.
     bool stay_on_desktop = !first && model->prev.content_layer == SrLayerDesktop &&
                            cur->content_layer == SrLayerDesktop;
     bool changed = !stay_on_desktop && (first || sr_screen_changed(&model->prev, cur));
