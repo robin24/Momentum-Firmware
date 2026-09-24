@@ -356,7 +356,8 @@ static bool speech_play_clip(Speech* speech, const char* path) {
     return true;
 }
 
-/** A word the vocabulary lacks: SAM speaks it, upper cased with a closing period. */
+/** SAM speaks a word, upper cased with a closing period: the last resort for a spelled
+ *  character whose clip is missing too. */
 static void speech_sam_word(Speech* speech, const char* word, const SamVoice* voice) {
     size_t len = strlen(word);
     if(len > sizeof(speech->chunk) - 3) len = sizeof(speech->chunk) - 3;
@@ -377,10 +378,29 @@ static void speech_sam_word(Speech* speech, const char* word, const SamVoice* vo
 }
 
 /**
- * The expanded text word by word: a clip when the card has it, SAM when not. A token's pause
- * is pushed before the next token, so it separates the two and none follows the last one: the
- * play out starts right after the last word. A token of punctuation only speaks nothing, but
- * its pause still goes between its neighbours.
+ * A word the vocabulary lacks is spelled with the letter and digit clips, a short gap between
+ * them; a character whose clip is missing too is spoken by SAM as the last resort. Each letter
+ * played from a clip counts as a clip in the voice status.
+ */
+static void speech_spell_word(Speech* speech, const char* word, const SamVoice* voice) {
+    char name[3];
+    for(const char* p = word; *p != '\0' && !speech->aborted; p++) {
+        if(!speech_voice_letter_clip(*p, name)) continue;
+        if(p != word && !speech_push_silence(speech, SPEECH_VOICE_LETTER_GAP_MS)) return;
+        if(speech_voice_path(name, speech->path, sizeof(speech->path)) > 0 &&
+           speech_play_clip(speech, speech->path)) {
+            speech->voice.clip_words++;
+            continue;
+        }
+        speech_sam_word(speech, name, voice);
+    }
+}
+
+/**
+ * The expanded text word by word: a clip when the card has it, spelled with the letter clips
+ * when not. A token's pause is pushed before the next token, so it separates the two and none
+ * follows the last one: the play out starts right after the last word. A token of punctuation
+ * only speaks nothing, but its pause still goes between its neighbours.
  */
 static void speech_speak_words(Speech* speech, const SamVoice* voice) {
     size_t pos = 0;
@@ -396,7 +416,7 @@ static void speech_speak_words(Speech* speech, const SamVoice* voice) {
         } else {
             speech->voice.fallback_words++;
             speech_voice_missing(&speech->voice, word.word);
-            speech_sam_word(speech, word.word, voice);
+            speech_spell_word(speech, word.word, voice);
         }
     }
 }

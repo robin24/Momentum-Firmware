@@ -79,6 +79,21 @@ size_t speech_voice_path(const char* word, char* out, size_t out_size) {
     return (size_t)(p - out);
 }
 
+bool speech_voice_letter_clip(char c, char out[3]) {
+    if(c == 'a') {
+        out[0] = 'a';
+        out[1] = 'y';
+        out[2] = '\0';
+        return true;
+    }
+    if((c >= 'b' && c <= 'z') || (c >= '0' && c <= '9')) {
+        out[0] = c;
+        out[1] = '\0';
+        return true;
+    }
+    return false;
+}
+
 void speech_voice_state_init(SpeechVoiceState* state) {
     memset(state, 0, sizeof(*state));
 }

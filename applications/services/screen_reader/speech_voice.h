@@ -1,8 +1,9 @@
 /**
  * @file speech_voice.h
  * Recorded voice: maps the words of an expanded announcement to clip files on the card and
- * the pauses between them, and remembers which words the vocabulary lacked. Pure C, host
- * tested; the worker in speech.c does the file and sample work.
+ * the pauses between them, names the letter and digit clips that spell a word the vocabulary
+ * lacks, and remembers which words it lacked. Pure C, host tested; the worker in speech.c does
+ * the file and sample work.
  */
 #pragma once
 
@@ -24,6 +25,9 @@ extern "C" {
 #define SPEECH_VOICE_GAP_MS      40
 #define SPEECH_VOICE_COMMA_MS    150
 #define SPEECH_VOICE_STOP_MS     300
+
+/** Silence between the letters of a word spelled with the letter clips. */
+#define SPEECH_VOICE_LETTER_GAP_MS 60
 
 typedef struct {
     char word[SPEECH_VOICE_WORD_MAX]; /**< lower case clip name, punctuation stripped; empty
@@ -49,14 +53,18 @@ uint32_t speech_voice_hash(const char* word);
  *  buffer too small. */
 size_t speech_voice_path(const char* word, char* out, size_t out_size);
 
+/** The clip name that spells one character: "ay" for a, the letter itself for b to z, the
+ *  digit itself for 0 to 9. False for anything else (the character is skipped). */
+bool speech_voice_letter_clip(char c, char out[3]);
+
 typedef struct {
     uint32_t hashes[SPEECH_VOICE_MISSING_SET]; /**< ring of words already recorded */
     uint8_t next;
     uint8_t count;
     char log[SPEECH_VOICE_LOG_MAX][SPEECH_VOICE_WORD_MAX]; /**< waiting for the log file */
     uint8_t log_count;
-    uint32_t clip_words; /**< words spoken from a clip since boot */
-    uint32_t fallback_words; /**< words spoken by SAM since boot */
+    uint32_t clip_words; /**< words and spelled letters spoken from a clip since boot */
+    uint32_t fallback_words; /**< words spelled letter by letter since boot */
     uint32_t missing_words; /**< distinct words recorded as missing since boot */
 } SpeechVoiceState;
 

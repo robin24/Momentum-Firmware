@@ -54,8 +54,8 @@ void speech_set_voice(Speech* speech, uint8_t rate, uint8_t volume);
 typedef struct {
     bool enabled; /**< recorded clips are used when the vocabulary is present */
     bool vocabulary; /**< /ext/sr/voice was found on the card */
-    uint32_t clip_words; /**< words spoken from clips since boot */
-    uint32_t fallback_words; /**< words spoken by SAM since boot */
+    uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
+    uint32_t fallback_words; /**< words spelled letter by letter since boot */
     uint32_t missing_words; /**< distinct words recorded in /ext/sr/missing.txt since boot */
     uint32_t open_max_ms; /**< longest clip open since boot, found or not */
     uint32_t open_last_ms; /**< the latest clip open */
