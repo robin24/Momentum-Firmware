@@ -37,10 +37,15 @@ Speech* speech_alloc(void);
  *  replaceable item is overwritten instead of queued behind it. */
 void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable);
 
+/** Say a text of any length, as a whole screen read on request: what is being said stops, what
+ *  waits is dropped, and the text is queued at once in parts of up to 159 characters cut after
+ *  a ". " or ", ", up to four parts (about 600 characters); see speech_queue_push_parts. */
+void speech_say_parts(Speech* speech, const char* text);
+
 /** Queue text to be spelled: what is being said stops and what waits is dropped, as with an
  *  interrupting speech_say. Every word is spelled with the letter and digit clips, 60 ms between
  *  letters and 150 ms between words; SAM says the letters one by one when the recorded voice is
- *  off or missing. */
+ *  off or missing. A text without letters or digits is said instead (an underscore key). */
 void speech_say_spelled(Speech* speech, const char* text);
 
 /** Play a file of raw unsigned 8 bit mono samples (128 is silence) from the card in place of

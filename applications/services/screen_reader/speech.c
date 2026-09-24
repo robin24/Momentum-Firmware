@@ -33,6 +33,9 @@
 #define SPEECH_VOICE_MISSING_PATH  "/ext/sr/missing.txt"
 #define SPEECH_VOICE_SETTINGS_PATH SPEECH_VOICE_DIR "/voice.txt"
 
+// A spelled run must reach the clip player whole
+_Static_assert(SPEECH_TEXT_SPELL_RUN_MAX <= SPEECH_VOICE_WORD_MAX - 1, "spelled runs too long");
+
 struct Speech {
     FuriThread* thread;
     volatile FuriThreadId thread_id;
@@ -461,30 +464,6 @@ static void speech_write_missing(Speech* speech) {
 }
 
 /**
- * The text of a spelled item, for both paths: its own characters rather than the expansion,
- * which would turn digits into number words and terms into their pronunciation. Letters and
- * digits are kept, any other character separates words as a space does, and a run longer than
- * a clip name is split so that nothing is cut.
- */
-static void speech_spell_copy(const char* in, char* out, size_t out_size) {
-    size_t o = 0;
-    size_t run = 0;
-    for(const char* p = in; *p != '\0' && o + 2 < out_size; p++) {
-        char c = *p;
-        bool alnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-        if(!alnum || run == SPEECH_VOICE_WORD_MAX - 1) {
-            out[o++] = ' ';
-            run = 0;
-        }
-        if(alnum) {
-            out[o++] = c;
-            run++;
-        }
-    }
-    out[o] = '\0';
-}
-
-/**
  * A spelled item without the recorded voice: SAM says the letters and digits one by one, A as
  * "AY" because a lone A is read as the article, with a comma between words for a pause. The
  * chunk buffer takes as many as fit and is spoken before it is filled again.
@@ -517,23 +496,24 @@ static void speech_sam_spell(Speech* speech, const SamVoice* voice) {
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     if(!speech_item_begin(speech, item)) return;
 
+    // A spelled item keeps its own letters and digits; one without any is said instead
+    bool spell = false;
     if(item->spell) {
-        speech_spell_copy(item->text, speech->expanded, sizeof(speech->expanded));
-    } else {
-        speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
+        spell = speech_text_spell_copy(item->text, speech->expanded, sizeof(speech->expanded)) > 0;
     }
+    if(!spell) speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
     SamVoice voice = SAM_VOICE_DEFAULT;
     voice.speed = speech->rate;
     speech->started = furi_get_tick();
 
     if(speech->voice_enabled && speech_voice_ready(speech)) {
-        speech_speak_words(speech, &voice, item->spell);
+        speech_speak_words(speech, &voice, spell);
         speech_item_end(speech);
         speech_write_missing(speech);
         return;
     }
 
-    if(item->spell) {
+    if(spell) {
         speech_sam_spell(speech, &voice);
     } else {
         size_t pos = 0;
@@ -647,31 +627,60 @@ Speech* speech_alloc(void) {
     return speech;
 }
 
-void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable) {
-    furi_check(speech && text);
+typedef enum {
+    SpeechPushWords, /* speech_queue_push with interrupt and replaceable */
+    SpeechPushParts,
+    SpeechPushSpelled,
+    SpeechPushFile, /* the text is the path, played at rate */
+} SpeechPushKind;
+
+/** Queue under the mutex, all parts of a text at once, keep the drop count for the status, then
+ *  wake the worker. */
+static void speech_push(
+    Speech* speech,
+    SpeechPushKind kind,
+    const char* text,
+    bool interrupt,
+    bool replaceable,
+    uint32_t rate) {
     speech_lock(speech);
-    speech_queue_push(&speech->queue, text, interrupt, replaceable);
+    switch(kind) {
+    case SpeechPushWords:
+        speech_queue_push(&speech->queue, text, interrupt, replaceable);
+        break;
+    case SpeechPushParts:
+        speech_queue_push_parts(&speech->queue, text);
+        break;
+    case SpeechPushSpelled:
+        speech_queue_push_spelled(&speech->queue, text);
+        break;
+    case SpeechPushFile:
+        speech_queue_push_file(&speech->queue, text, rate);
+        break;
+    }
     speech->stats.queue_dropped = speech->queue.dropped;
     speech_unlock(speech);
     furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+}
+
+void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable) {
+    furi_check(speech && text);
+    speech_push(speech, SpeechPushWords, text, interrupt, replaceable, 0);
+}
+
+void speech_say_parts(Speech* speech, const char* text) {
+    furi_check(speech && text);
+    speech_push(speech, SpeechPushParts, text, true, false, 0);
 }
 
 void speech_say_spelled(Speech* speech, const char* text) {
     furi_check(speech && text);
-    speech_lock(speech);
-    speech_queue_push_spelled(&speech->queue, text);
-    speech->stats.queue_dropped = speech->queue.dropped;
-    speech_unlock(speech);
-    furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+    speech_push(speech, SpeechPushSpelled, text, true, false, 0);
 }
 
 void speech_play(Speech* speech, const char* path, uint32_t rate) {
     furi_check(speech && path);
-    speech_lock(speech);
-    speech_queue_push_file(&speech->queue, path, speech_clamp_rate(rate));
-    speech->stats.queue_dropped = speech->queue.dropped;
-    speech_unlock(speech);
-    furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+    speech_push(speech, SpeechPushFile, path, true, false, speech_clamp_rate(rate));
 }
 
 void speech_stop(Speech* speech) {

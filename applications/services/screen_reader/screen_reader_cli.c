@@ -119,8 +119,8 @@ static void sr_cli_screen(ScreenReader* sr) {
 
     SrScreen* screen = malloc(sizeof(SrScreen));
     screen_reader_get_screen(sr, screen);
-    char* text = malloc(SR_ANN_TEXT_MAX);
-    sr_screen_describe(screen, text, SR_ANN_TEXT_MAX);
+    char* text = malloc(SR_DESCRIBE_TEXT_MAX);
+    sr_screen_describe(screen, text, SR_DESCRIBE_TEXT_MAX);
     printf("reads as: %s\r\n", text);
     free(text);
     free(screen);
@@ -270,6 +270,10 @@ static void sr_cli_chord(ScreenReader* sr, FuriString* args) {
         {"left", SrChordVolumeDown, "volume down"},
         {"right", SrChordVolumeUp, "volume up"},
     };
+    if(!screen_reader_is_enabled(sr)) {
+        printf("screen reader is off\r\n");
+        return;
+    }
     FuriString* key = furi_string_alloc();
     bool has = args_read_string_and_trim(args, key);
     size_t i = 0;
@@ -368,8 +372,8 @@ static void sr_cli_press(FuriPubSub* input, InputKey key) {
 static void sr_cli_print_screen(ScreenReader* sr) {
     SrScreen* screen = malloc(sizeof(SrScreen));
     screen_reader_get_screen(sr, screen);
-    char* text = malloc(SR_ANN_TEXT_MAX);
-    sr_screen_describe(screen, text, SR_ANN_TEXT_MAX);
+    char* text = malloc(SR_DESCRIBE_TEXT_MAX);
+    sr_screen_describe(screen, text, SR_DESCRIBE_TEXT_MAX);
     printf("screen: %s\r\n", text);
     free(text);
     free(screen);

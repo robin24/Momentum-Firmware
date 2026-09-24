@@ -18,6 +18,8 @@ extern "C" {
 #define SR_MAX_ROWS          16
 #define SR_ROW_TEXT_MAX      64
 #define SR_ANN_TEXT_MAX      160
+/** A whole screen read on request (Back plus Up, the console): speech says it in parts */
+#define SR_DESCRIBE_TEXT_MAX (4 * SR_ANN_TEXT_MAX)
 #define SR_MAX_ANNOUNCEMENTS 4
 
 /** Same numbering as GuiLayer in gui.h; duplicated so this header has no gui dependency. */

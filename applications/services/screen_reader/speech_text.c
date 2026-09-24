@@ -549,6 +549,31 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
     return o.len;
 }
 
+size_t speech_text_spell_copy(const char* in, char* out, size_t out_size) {
+    if(out_size == 0) return 0;
+    size_t o = 0;
+    size_t run = 0;
+    bool gap = false; // a separator came after the last character kept
+    for(const char* p = in ? in : ""; *p; p++) {
+        if(!is_alnum(*p)) {
+            gap = true;
+            continue;
+        }
+        if(run == SPEECH_TEXT_SPELL_RUN_MAX) gap = true;
+        if(gap && o > 0) {
+            if(o + 2 >= out_size) break; // the space and a character, or neither
+            out[o++] = ' ';
+            run = 0;
+        }
+        gap = false;
+        if(o + 1 >= out_size) break;
+        out[o++] = *p;
+        run++;
+    }
+    out[o] = '\0';
+    return o;
+}
+
 size_t speech_text_next_chunk(const char* text, size_t* pos, char* chunk, size_t chunk_size) {
     if(chunk_size == 0) return 0;
     chunk[0] = '\0';

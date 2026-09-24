@@ -41,9 +41,10 @@ struct ScreenReader {
     FuriPubSubSubscription* input_subscription;
     volatile uint32_t last_press_tick;
 
-    // Chords: the state belongs to the input filter; a command waits here for the service thread
+    // Chords: the state belongs to the input filter. A command waits here for the service
+    // thread, which takes it with an atomic exchange: the latest one wins, none runs twice
     SrChords chords;
-    volatile uint8_t pending_command;
+    uint8_t pending_command;
 };
 
 static void sr_lock(ScreenReader* sr) {
@@ -115,7 +116,7 @@ static void sr_input_callback(const void* value, void* context) {
 
 void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
     furi_check(sr);
-    sr->pending_command = (uint8_t)command;
+    __atomic_store_n(&sr->pending_command, (uint8_t)command, __ATOMIC_SEQ_CST);
     furi_thread_flags_set(sr->thread_id, SR_FLAG_COMMAND);
 }
 
@@ -187,36 +188,39 @@ static void sr_process(ScreenReader* sr) {
     sr_unlock(sr);
 }
 
-// A chord's command, on the service thread. Every command interrupts what is being said
+// A chord's command, on the service thread. Every command interrupts what is being said; the
+// texts that can outgrow a speech item (the whole screen, the status bar, the focus) are said
+// in parts. The screen is read in place: only this thread writes model.prev (sr_process), and a
+// copy would take another 1.3 KB of heap in apps that leave little
 static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
-    char* text = malloc(SR_ANN_TEXT_MAX);
-    SrScreen* screen = malloc(sizeof(SrScreen));
-    screen_reader_get_screen(sr, screen);
+    char* text = malloc(SR_DESCRIBE_TEXT_MAX);
+    const SrScreen* screen = &sr->model.prev;
     sr_push_voice(sr);
     switch(command) {
     case SrChordReadAll:
-        sr_screen_describe(screen, text, SR_ANN_TEXT_MAX);
+        sr_screen_describe(screen, text, SR_DESCRIBE_TEXT_MAX);
         if(text[0] == '\0') {
             // The home screen draws no text of its own; the model announces it the same way
             strlcpy(
                 text,
                 screen->content_layer == SrLayerDesktop ? "Home screen" : "Nothing on screen",
-                SR_ANN_TEXT_MAX);
+                SR_DESCRIBE_TEXT_MAX);
         }
-        speech_say(sr->speech, text, true, false);
+        speech_say_parts(sr->speech, text);
         break;
     case SrChordStatus:
-        sr_status_text(screen, text, SR_ANN_TEXT_MAX);
-        if(text[0] == '\0') strlcpy(text, "No status bar", SR_ANN_TEXT_MAX);
-        speech_say(sr->speech, text, true, false);
+        sr_status_text(screen, text, SR_DESCRIBE_TEXT_MAX);
+        if(text[0] == '\0') strlcpy(text, "No status bar", SR_DESCRIBE_TEXT_MAX);
+        speech_say_parts(sr->speech, text);
         break;
     case SrChordRepeat:
-        sr_focus_with_position(screen, text, SR_ANN_TEXT_MAX);
-        if(text[0] == '\0') strlcpy(text, "No focus", SR_ANN_TEXT_MAX);
-        speech_say(sr->speech, text, true, false);
+        sr_focus_with_position(screen, text, SR_DESCRIBE_TEXT_MAX);
+        if(text[0] == '\0') strlcpy(text, "No focus", SR_DESCRIBE_TEXT_MAX);
+        speech_say_parts(sr->speech, text);
         break;
     case SrChordSpell:
-        sr_screen_focus_text(screen, text, SR_ANN_TEXT_MAX);
+        // One speech item of letters (159 characters is a minute of spelling)
+        sr_screen_focus_text(screen, text, SR_DESCRIBE_TEXT_MAX);
         if(text[0] == '\0') {
             speech_say(sr->speech, "No focus", true, false); // said, not spelled
         } else {
@@ -231,14 +235,13 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
         momentum_settings.sr_volume = (uint32_t)v;
         momentum_settings_save();
         speech_set_voice(sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)v);
-        snprintf(text, SR_ANN_TEXT_MAX, "Volume %d", v);
+        snprintf(text, SR_DESCRIBE_TEXT_MAX, "Volume %d", v);
         speech_say(sr->speech, text, true, false);
         break;
     }
     default:
         break;
     }
-    free(screen);
     free(text);
 }
 
@@ -341,9 +344,16 @@ int32_t screen_reader_srv(void* p) {
             continue;
         }
         if(flags & SR_FLAG_COMMAND) {
-            sr_run_command(sr, (SrChordCommand)sr->pending_command);
-        }
-        if(flags & SR_FLAG_FRAME) {
+            // A command reads the screen as it is now: a frame still settling is modelled first,
+            // as the timeout would have done. With the reader turned off meanwhile it is dropped
+            pending = false;
+            sr_process(sr);
+            SrChordCommand command = (SrChordCommand)__atomic_exchange_n(
+                &sr->pending_command, (uint8_t)SrChordNone, __ATOMIC_SEQ_CST);
+            if(command != SrChordNone && momentum_settings.screen_reader) {
+                sr_run_command(sr, command);
+            }
+        } else if(flags & SR_FLAG_FRAME) {
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }

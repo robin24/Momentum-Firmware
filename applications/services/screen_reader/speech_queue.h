@@ -48,6 +48,15 @@ void speech_queue_push_file(SpeechQueue* queue, const char* path, uint32_t rate)
  *  new generation), with spell true. */
 void speech_queue_push_spelled(SpeechQueue* queue, const char* text);
 
+/** Queue a text of any length, as a whole screen read on request is: in parts of at most
+ *  SPEECH_ITEM_TEXT_MAX - 1 characters, each cut after the last ". " or ", " that fits, else at
+ *  the last space that fits, else at the limit; the spaces between parts are dropped. The first
+ *  part interrupts (everything cleared, a new generation), the others follow it, none is
+ *  replaceable. At most SPEECH_QUEUE_CAPACITY parts are queued, about 600 characters; the parts
+ *  after them are counted as dropped. A text of spaces only queues nothing. Returns the parts
+ *  queued. */
+size_t speech_queue_push_parts(SpeechQueue* queue, const char* text);
+
 bool speech_queue_pop(SpeechQueue* queue, SpeechItem* out);
 
 /** Clear everything and start a new generation. */
