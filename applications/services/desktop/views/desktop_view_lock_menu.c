@@ -82,7 +82,8 @@ void desktop_lock_menu_set_idx(DesktopLockMenuView* lock_menu, uint8_t idx) {
 }
 
 /** The selected tile for the screen reader: its name, "on" or "off" after a switch, the level
- * after a slider ("Brightness 50"), "Volume muted" in stealth mode. */
+ * after a slider ("Brightness 50"), and "muted" after the volume in stealth mode ("Volume 50,
+ * muted"). */
 static void
     desktop_lock_menu_tap_note(Canvas* canvas, const DesktopLockMenuViewModel* m, bool enabled) {
     if(m->idx >= DesktopLockMenuIndexTotalCount) return;
@@ -100,13 +101,14 @@ static void
             note, sizeof(note), "%s %d", name, (int)(settings->display_brightness * 100.0f + 0.5f));
         break;
     case DesktopLockMenuIndexVolume:
-        if(m->stealth_mode) {
-            // The tile shows the muted icon: stealth mode keeps the speaker quiet
-            snprintf(note, sizeof(note), "%s muted", name);
-        } else {
-            snprintf(
-                note, sizeof(note), "%s %d", name, (int)(settings->speaker_volume * 100.0f + 0.5f));
-        }
+        // Stealth mode mutes the device's sounds: the tile shows the muted icon and the level
+        snprintf(
+            note,
+            sizeof(note),
+            "%s %d%s",
+            name,
+            (int)(settings->speaker_volume * 100.0f + 0.5f),
+            m->stealth_mode ? ", muted" : "");
         break;
     default:
         strlcpy(note, name, sizeof(note));

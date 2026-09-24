@@ -97,12 +97,14 @@ void desktop_view_locked_draw_lockscreen(Canvas* canvas, void* m) {
         canvas_draw_icon(canvas, 0, 0 + y, &I_Lockscreen);
     }
     // The lock and how to leave it are icons: the screen reader hears them. Not while the cover
-    // opens after an unlock, when the PIN flag is already cleared and the words would be wrong
+    // opens after an unlock, when the PIN flag is already cleared and the words would be wrong.
+    // Quickly: a Back more than 600 ms after the one before starts the count again. The 3 is a
+    // digit because a note keeps 47 characters; it is spoken as "three"
     if(model->view_state != DesktopViewLockedStateCoverOpening) {
         canvas_tap_hint_note(
             canvas,
             model->pin_locked ? "Locked with PIN, press Up to enter it" :
-                                "Locked, press Back three times to unlock",
+                                "Locked, press Back 3 times quickly to unlock",
             false);
     }
     if(momentum_settings.lockscreen_time) {
@@ -128,7 +130,8 @@ void desktop_view_locked_draw_lockscreen(Canvas* canvas, void* m) {
         // prompt below shows as an icon, and says it with the prompt turned off as well
         canvas_tap_hint_note(
             canvas,
-            model->pin_locked ? "Press Up to enter the PIN" : "Press Back three times to unlock",
+            model->pin_locked ? "Press Up to enter the PIN" :
+                                "Press Back three times quickly to unlock",
             false);
     }
     if(model->view_state == DesktopViewLockedStateLockedHintShown &&

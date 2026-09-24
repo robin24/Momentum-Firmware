@@ -23,8 +23,9 @@
 #define SR_KEY_RECENT_MS   500
 #define SR_DESKTOP_KEY_MS  2000
 
-// The lock screen's own words (desktop_view_locked.c), said when the desktop locks
-#define SR_LOCKED_TEXT     "Locked, press Back three times to unlock"
+// The lock screen's own words (desktop_view_locked.c, whose note writes the 3 as a digit to fit a
+// tap record), said when the desktop locks. Quickly: after 600 ms without a key it counts afresh
+#define SR_LOCKED_TEXT     "Locked, press Back three times quickly to unlock"
 #define SR_LOCKED_PIN_TEXT "Locked with PIN, press Up to enter it"
 
 struct ScreenReader {
@@ -35,6 +36,7 @@ struct ScreenReader {
 
     // Written on the GUI thread between frame_begin and frame_end
     bool capturing;
+    bool turned_on; // the setting went from off to on; cleared when a frame is handed over
     SrFrame filling;
 
     // Shared, guarded by mutex
@@ -74,7 +76,11 @@ static void sr_unlock(ScreenReader* sr) {
 // GUI thread. Must be fast, must not call gui_* functions.
 static void sr_frame_begin(void* context) {
     ScreenReader* sr = context;
+    bool was_capturing = sr->capturing;
     sr->capturing = momentum_settings.screen_reader;
+    // Turned back on, by the settings app writing the setting or by sr on: the screen is read
+    // again, also when it is the one the reader last saw before it went off
+    if(sr->capturing && !was_capturing) sr->turned_on = true;
     sr->filling.count = 0;
     sr->filling.overflow = false;
     sr->filling.content_layer = SrLayerUnknown;
@@ -109,6 +115,12 @@ static void sr_frame_end(void* context, uint8_t content_layer) {
     if(furi_mutex_acquire(sr->mutex, 2) == FuriStatusOk) {
         memcpy(&sr->ready, &sr->filling, sizeof(SrFrame));
         sr->ready_valid = true;
+        if(sr->turned_on) {
+            // As screen_reader_set_enabled does: without a previous screen the model announces
+            // this frame as a new screen
+            sr->model.have_prev = false;
+            sr->turned_on = false;
+        }
         furi_mutex_release(sr->mutex);
         furi_thread_flags_set(sr->thread_id, SR_FLAG_FRAME);
     } else {
@@ -343,13 +355,16 @@ void screen_reader_set_watch_queue(ScreenReader* sr, FuriMessageQueue* queue) {
 
 void screen_reader_set_enabled(ScreenReader* sr, bool enabled) {
     furi_check(sr);
-    momentum_settings.screen_reader = enabled;
-    momentum_settings_save();
     if(enabled) {
-        // Announce the current screen on the next frame
+        // Announce the current screen on the next frame. Forgotten before the setting changes:
+        // a frame drawn while the setting is saved is then announced once, not again after it
         sr_lock(sr);
         sr->model.have_prev = false;
         sr_unlock(sr);
+    }
+    momentum_settings.screen_reader = enabled;
+    momentum_settings_save();
+    if(enabled) {
         gui_update(sr->gui);
     } else {
         speech_stop(sr->speech);
