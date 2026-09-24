@@ -42,6 +42,23 @@ typedef struct {
     InputType type;
 } InputEvent;
 
+/** Result of an input filter: drop suppresses the event; emit_long publishes an extra Long event
+ *  for the same key while the key still counts as held, that is right before the event when the
+ *  event is the key's Release (gui and view_dispatcher discard a Long that follows its key's
+ *  Release) and right after it otherwise; the Long alone when drop is set too. The extra Long
+ *  does not pass the filter. */
+typedef struct {
+    bool drop;
+    bool emit_long;
+} InputFilterResult;
+
+/** Called before every input event is published, on the publishing thread: the input service
+ *  (Press, Release, Short), the timer service (Long, Repeat) or a console thread. The input
+ *  service's filter lock keeps the calls apart from each other and from input_set_filter: the
+ *  filter must not block, must not call input_set_filter and must not publish input events. */
+typedef void (
+    *InputFilterCallback)(const InputEvent* event, InputFilterResult* result, void* context);
+
 typedef enum {
     AsciiValueNUL = 0x00, // NULL
     _AsciiValueSOH = 0x01, // Start of Heading
@@ -95,6 +112,21 @@ const char* input_get_key_name(InputKey key);
  * @return string
  */
 const char* input_get_type_name(InputType type);
+
+/** Install or remove (NULL) the single input filter. Used by the screen reader. Waits for the
+ *  input service to start; once it returns, the previous filter is not running and is not called
+ *  again, so its context may be freed.
+ * @param callback - the filter, or NULL for none
+ * @param context - passed to the filter
+ */
+void input_set_filter(InputFilterCallback callback, void* context);
+
+/** Publish an input event through the filter, the way the input service publishes the events of
+ *  the keys. For events made in software, such as the console's.
+ * @param pubsub - the RECORD_INPUT_EVENTS pubsub
+ * @param event - the event
+ */
+void input_publish_event(FuriPubSub* pubsub, InputEvent* event);
 
 #ifdef __cplusplus
 }

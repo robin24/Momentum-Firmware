@@ -2217,6 +2217,8 @@ Function,+,infrared_worker_tx_stop,void,InfraredWorker*
 Function,-,initstate,char*,"unsigned, char*, size_t"
 Function,+,input_get_key_name,const char*,InputKey
 Function,+,input_get_type_name,const char*,InputType
+Function,+,input_publish_event,void,"FuriPubSub*, InputEvent*"
+Function,-,input_set_filter,void,"InputFilterCallback, void*"
 Function,-,iprintf,int,"const char*, ..."
 Function,-,isalnum,int,int
 Function,-,isalnum_l,int,"int, locale_t"

@@ -51,13 +51,13 @@ static void fake_input(FuriPubSub* event_pubsub, InputKey key, InputType type) {
 
     if(wrap) {
         event.type = InputTypePress;
-        furi_pubsub_publish(event_pubsub, &event);
+        input_publish_event(event_pubsub, &event);
     }
     event.type = type;
-    furi_pubsub_publish(event_pubsub, &event);
+    input_publish_event(event_pubsub, &event);
     if(wrap) {
         event.type = InputTypeRelease;
-        furi_pubsub_publish(event_pubsub, &event);
+        input_publish_event(event_pubsub, &event);
     }
 }
 

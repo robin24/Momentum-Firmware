@@ -35,6 +35,46 @@ typedef struct {
 
 #define GPIO_Read(input_pin) (furi_hal_gpio_read(input_pin.pin->gpio) ^ (input_pin.pin->inverted))
 
+// The single input filter and its context, guarded by input_filter_mutex. The service allocates
+// the mutex before it creates RECORD_INPUT_EVENTS, so whoever holds that record may use it.
+static FuriMutex* input_filter_mutex = NULL;
+static InputFilterCallback input_filter = NULL;
+static void* input_filter_context = NULL;
+
+void input_set_filter(InputFilterCallback callback, void* context) {
+    // Opening the record waits for the service, which allocates the mutex first
+    furi_record_open(RECORD_INPUT_EVENTS);
+    furi_check(furi_mutex_acquire(input_filter_mutex, FuriWaitForever) == FuriStatusOk);
+    input_filter = callback;
+    input_filter_context = context;
+    furi_check(furi_mutex_release(input_filter_mutex) == FuriStatusOk);
+    furi_record_close(RECORD_INPUT_EVENTS);
+}
+
+// Every input event leaves through here so that the filter sees all of them: Press, Release and
+// Short from the service loop, Long and Repeat from the press timers on the timer service thread,
+// and the console's events. The timer service thread runs at a lower priority than the input
+// service, so a filter call there can be preempted by one from the service loop: the mutex keeps
+// the calls apart, and input_set_filter cannot swap the filter while it runs.
+void input_publish_event(FuriPubSub* pubsub, InputEvent* event) {
+    furi_check(pubsub);
+    furi_check(event);
+
+    InputFilterResult result = {false, false};
+    furi_check(furi_mutex_acquire(input_filter_mutex, FuriWaitForever) == FuriStatusOk);
+    if(input_filter) input_filter(event, &result, input_filter_context);
+    furi_check(furi_mutex_release(input_filter_mutex) == FuriStatusOk);
+
+    InputEvent long_event = *event;
+    long_event.type = InputTypeLong;
+    // gui and view_dispatcher discard a Long that follows its key's Release, so before a Release
+    // the extra Long goes first
+    bool long_first = result.emit_long && event->type == InputTypeRelease;
+    if(long_first) furi_pubsub_publish(pubsub, &long_event);
+    if(!result.drop) furi_pubsub_publish(pubsub, event);
+    if(result.emit_long && !long_first) furi_pubsub_publish(pubsub, &long_event);
+}
+
 void input_press_timer_callback(void* arg) {
     InputPinState* input_pin = arg;
     InputEvent event;
@@ -44,11 +84,11 @@ void input_press_timer_callback(void* arg) {
     input_pin->press_counter++;
     if(input_pin->press_counter == INPUT_LONG_PRESS_COUNTS) {
         event.type = InputTypeLong;
-        furi_pubsub_publish(input_pin->event_pubsub, &event);
+        input_publish_event(input_pin->event_pubsub, &event);
     } else if(input_pin->press_counter > INPUT_LONG_PRESS_COUNTS) {
         input_pin->press_counter--;
         event.type = InputTypeRepeat;
-        furi_pubsub_publish(input_pin->event_pubsub, &event);
+        input_publish_event(input_pin->event_pubsub, &event);
     }
 }
 
@@ -87,6 +127,8 @@ int32_t input_srv(void* p) {
     UNUSED(p);
 
     const FuriThreadId thread_id = furi_thread_get_current_id();
+    // Before the record exists: whoever opens it may install a filter right away
+    input_filter_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     FuriPubSub* event_pubsub = furi_pubsub_alloc();
     FuriPubSub* ascii_pubsub = furi_pubsub_alloc();
     uint32_t counter = 1;
@@ -147,14 +189,14 @@ int32_t input_srv(void* p) {
                         furi_delay_tick(1);
                     if(pin_states[i].press_counter < INPUT_LONG_PRESS_COUNTS) {
                         event.type = InputTypeShort;
-                        furi_pubsub_publish(event_pubsub, &event);
+                        input_publish_event(event_pubsub, &event);
                     }
                     pin_states[i].press_counter = 0;
                 }
 
                 // Send Press/Release event
                 event.type = pin_states[i].state ? InputTypePress : InputTypeRelease;
-                furi_pubsub_publish(event_pubsub, &event);
+                input_publish_event(event_pubsub, &event);
                 // vibro signal if user setup vibro touch level in Settings-Input.
                 if(settings->vibro_touch_level &&
                    ((1 << event.type) & settings->vibro_touch_trigger_mask)) {
