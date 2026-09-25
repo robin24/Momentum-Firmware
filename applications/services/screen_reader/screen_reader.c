@@ -193,7 +193,8 @@ void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
 // tap reads it. While the reader is off, whoever turned it off (the chord, the console, or the
 // settings app writing the setting directly), Back and Down held long is the only chord, and it
 // turns the reader on again: Back's own Long is delayed to its release and a Down pressed under
-// Back is held back, as with the reader on; everything else passes (sr_chords.h)
+// Back is held back, as with the reader on; everything else passes, except Back's repeats,
+// dropped in both modes (sr_chords.h)
 static void sr_input_filter(const InputEvent* event, InputFilterResult* result, void* context) {
     ScreenReader* sr = context;
     bool drop = false, emit_long = false;
