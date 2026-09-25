@@ -502,11 +502,12 @@ void canvas_tap_hint_note(Canvas* canvas, const char* text, bool focus);
 /** Tell the screen reader words that belong at a place on the screen, as if drawn there.
  *
  * Nothing is drawn. Call it from a draw callback. The same note as canvas_tap_hint_note's, in
- * the secondary font and never the screen's title nor its focus, but placed: x and y are the
- * start and the baseline of the text as for canvas_draw_str, and the reader reads it in its place
- * among the drawn strings, joined to the row on that baseline after the text drawn to its left.
- * A note placed at the screen's x 0, y 0 is a plain note. Does nothing while no screen reader
- * listens.
+ * the secondary font and never the focus, but placed: x and y are the start and the baseline of
+ * the text as for canvas_draw_str, and the reader reads it in its place among the drawn strings,
+ * joined to the row on that baseline after the text drawn to its left. A row the note begins is
+ * never the screen's title; a note that joins a row begun by drawn title-font text at the top of
+ * the screen is read inside that title. A note placed at the screen's x 0, y 0 is a plain note.
+ * Does nothing while no screen reader listens.
  *
  * @param      canvas  Canvas instance
  * @param      x       x of the text's start

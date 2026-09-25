@@ -38,6 +38,8 @@
 // A card mount reaches the reader before the dolphin, which then queues a reload of its state:
 // this long a pause lets that reload go ahead of the reader's question for the level
 #define SR_MOUNT_SETTLE_MS   50
+// Until the desktop's and the dolphin's records exist the loop wakes this often to subscribe
+#define SR_SUBSCRIBE_POLL_MS 250
 
 // The lock screen's own words (desktop_view_locked.c, whose note writes the 3 as a digit to fit a
 // tap record), said when the desktop locks. Quickly: after 600 ms without a key it counts afresh
@@ -78,10 +80,8 @@ struct ScreenReader {
     uint8_t pending_command;
 
     // The desktop's lock state, for "Locked" and "Unlocked"; subscribed once the desktop record
-    // exists. The service thread alone keeps the time of the last lock announcement.
-    // desktop_locked follows the desktop's messages, with the reader off too, for the toggle
+    // exists. The service thread alone keeps the time of the last lock announcement
     FuriPubSubSubscription* desktop_subscription;
-    bool desktop_locked;
     bool lock_said;
     uint32_t lock_said_tick;
 
@@ -190,9 +190,10 @@ void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
 // Input filter: runs on the input service, timer service or a console thread, serialized by
 // the input filter lock. It must not block, call input_set_filter or publish input events.
 // Installed once at start and fed every event with the setting as it is now, read like the text
-// tap reads it: while the reader is off, whoever turned it off (the chord, the console, or the
+// tap reads it. While the reader is off, whoever turned it off (the chord, the console, or the
 // settings app writing the setting directly), Back and Down held long is the only chord, and it
-// turns the reader on again; every other key passes as an ordinary key (sr_chords.h)
+// turns the reader on again: Back's own Long is delayed to its release and a Down pressed under
+// Back is held back, as with the reader on; everything else passes (sr_chords.h)
 static void sr_input_filter(const InputEvent* event, InputFilterResult* result, void* context) {
     ScreenReader* sr = context;
     bool drop = false, emit_long = false;
@@ -223,7 +224,6 @@ static void sr_push_volume(ScreenReader* sr) {
 static void sr_desktop_status_callback(const void* message, void* context) {
     const DesktopStatus* status = message;
     ScreenReader* sr = context;
-    __atomic_store_n(&sr->desktop_locked, status->locked, __ATOMIC_SEQ_CST);
     uint32_t flag = SR_FLAG_UNLOCKED;
     if(status->locked) {
         flag = furi_hal_rtc_is_flag_set(FuriHalRtcFlagLock) ? SR_FLAG_LOCKED_PIN : SR_FLAG_LOCKED;
@@ -232,15 +232,14 @@ static void sr_desktop_status_callback(const void* message, void* context) {
 }
 
 // The desktop service starts before the reader but creates its record at the end of its setup,
-// so the service loop retries on every frame until the record is there
+// so the service loop tries again at every wake-up until the record is there, and meanwhile
+// wakes every SR_SUBSCRIBE_POLL_MS, whatever the setting: with the reader off no frame wakes
+// it, and the locks must be heard once the chord turns the reader on
 static void sr_subscribe_desktop(ScreenReader* sr) {
     if(sr->desktop_subscription || !furi_record_exists(RECORD_DESKTOP)) return;
     Desktop* desktop = furi_record_open(RECORD_DESKTOP);
     sr->desktop_subscription = furi_pubsub_subscribe(
         desktop_api_get_status_pubsub(desktop), sr_desktop_status_callback, sr);
-    // A lock published before this subscription is a PIN lock at boot, which the RTC flag tells
-    if(desktop_api_is_locked(desktop))
-        __atomic_store_n(&sr->desktop_locked, true, __ATOMIC_SEQ_CST);
 }
 
 // Dolphin thread, after a deed or a level up. Only a flag, as for the desktop: dolphin_stats waits
@@ -253,7 +252,7 @@ static void sr_dolphin_callback(const void* message, void* context) {
 }
 
 // The dolphin service creates its record first thing when it starts, but in a special boot (an
-// update) it never starts. So, as for the desktop, the service loop tries again on every frame
+// update) it never starts. So, as for the desktop, the service loop tries again at every wake-up
 // until the record is there, and the reader keeps reading the update's screens meanwhile. Then it
 // subscribes and reads the level once: subscribed first, so every level up after the read is seen
 static void sr_subscribe_dolphin(ScreenReader* sr) {
@@ -402,20 +401,28 @@ static const char* sr_mood(uint32_t butthurt) {
     return "angry";
 }
 
+// The frame the tap handed over, modelled, with the mutex held: false when none waits. Its
+// announcements are left in sr->announcements, *count of them
+static bool sr_model_ready(ScreenReader* sr, uint32_t now, bool key_recent, size_t* count) {
+    if(!sr->ready_valid) return false;
+    memcpy(&sr->working, &sr->ready, sizeof(SrFrame));
+    sr->ready_valid = false;
+    sr->model.verbosity = momentum_settings.sr_verbosity;
+    *count = sr_model_process(
+        &sr->model, &sr->working, now, key_recent, sr->announcements, SR_MAX_ANNOUNCEMENTS);
+    sr->stats.frames++;
+    return true;
+}
+
 // Runs the model under the mutex (well under a millisecond) so that the console
 // commands never read a half written screen description.
 static void sr_process(ScreenReader* sr) {
     sr_lock(sr);
-    if(sr->ready_valid) {
-        memcpy(&sr->working, &sr->ready, sizeof(SrFrame));
-        sr->ready_valid = false;
-        uint32_t now = furi_get_tick();
-        uint32_t since_press = now - sr->last_press_tick;
-        bool key_recent = since_press < SR_KEY_RECENT_MS;
-        sr->model.verbosity = momentum_settings.sr_verbosity;
-        size_t n = sr_model_process(
-            &sr->model, &sr->working, now, key_recent, sr->announcements, SR_MAX_ANNOUNCEMENTS);
-        sr->stats.frames++;
+    uint32_t now = furi_get_tick();
+    uint32_t since_press = now - sr->last_press_tick;
+    bool key_recent = since_press < SR_KEY_RECENT_MS;
+    size_t n = 0;
+    if(sr_model_ready(sr, now, key_recent, &n)) {
         for(size_t i = 0; i < n; i++) {
             const SrAnnouncement* a = &sr->announcements[i];
             bool unasked = a->kind == SrAnnChange || (a->kind == SrAnnHome && !a->interrupt);
@@ -549,10 +556,11 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
 
 // The screen as it is when the chord turned the reader on, on the service thread. It asks for a
 // frame, which the tap captures now that the setting is on, and waits for it and for the frames
-// that follow within SR_SETTLE_MS, at most SR_MAX_LATENCY_MS in all, as the loop lets a screen
-// settle. The last one is modelled without its announcements: the tap made it a new screen
-// (sr_frame_begin), which would be read again and cut the confirmation off. Now it is the screen
-// announced, and its next frame brings no news. False when no frame came in time
+// that follow within SR_SETTLE_MS, as the loop lets a screen settle: SR_MAX_LATENCY_MS in all,
+// and one last SR_SETTLE_MS wait beyond it at most. The last frame is modelled without its
+// announcements: the tap made it a new screen (sr_frame_begin), which would be read again and
+// cut the confirmation off. Now it is the screen announced, and its next frame brings no news.
+// False when no frame came in time
 static bool sr_model_screen_quietly(ScreenReader* sr) {
     furi_thread_flags_clear(SR_FLAG_FRAME);
     gui_update(sr->gui);
@@ -563,32 +571,21 @@ static bool sr_model_screen_quietly(ScreenReader* sr) {
         wait = SR_SETTLE_MS;
     }
     sr_lock(sr);
-    bool modelled = sr->ready_valid;
-    if(modelled) {
-        memcpy(&sr->working, &sr->ready, sizeof(SrFrame));
-        sr->ready_valid = false;
-        sr_model_process(
-            &sr->model,
-            &sr->working,
-            furi_get_tick(),
-            false,
-            sr->announcements,
-            SR_MAX_ANNOUNCEMENTS);
-        sr->stats.frames++;
-    }
+    size_t unsaid;
+    bool modelled = sr_model_ready(sr, furi_get_tick(), false, &unsaid);
     sr_unlock(sr);
     return modelled;
 }
 
-// Back and Down held long, or sr chord downhold, on the service thread, with the reader on or off;
-// ignored while the desktop is locked, where Back is the lock screen's own key. Off: the reader
-// goes off as sr off turns it off, then "Screen reader off" is said by the engine itself, as sr
-// say is. On: the setting saved, the screen modelled quietly, then one utterance in parts, "Screen
-// reader on. " first and the screen as Back and Up reads it right after; "Screen reader on" alone
-// when no frame came. A change held from before either would be read after it, from a screen
-// long gone
+// Back and Down held long, or sr chord downhold, on the service thread, with the reader on or off
+// and on every screen, the lock screen and the PIN entry included, where Back with Down means
+// nothing else: it is how a user who boots into a lock with the reader off gets speech back.
+// Off: the reader goes off as sr off turns it off, then "Screen reader off" is said by the engine
+// itself, as sr say is. On: the setting saved, the screen modelled quietly, then one utterance in
+// parts, "Screen reader on. " first and the screen as Back and Up reads it right after; "Screen
+// reader on" alone when no frame came. A change held from before either would be read after it,
+// from a screen long gone
 static void sr_toggle(ScreenReader* sr) {
-    if(__atomic_load_n(&sr->desktop_locked, __ATOMIC_SEQ_CST)) return;
     sr_throttle_clear(&sr->throttle);
     if(momentum_settings.screen_reader) {
         screen_reader_set_enabled(sr, false);
@@ -697,7 +694,7 @@ int32_t screen_reader_srv(void* p) {
 
     furi_record_create(RECORD_SCREEN_READER, sr);
     screen_reader_cli_register(sr);
-    // After the record and the console, as dolphin_stats may wait for the dolphin; a frame tries
+    // After the record and the console, as dolphin_stats may wait for the dolphin; the loop tries
     // again if the dolphin's record is not there yet
     sr_subscribe_dolphin(sr);
     FURI_LOG_I(TAG, "Started, enabled=%d", momentum_settings.screen_reader);
@@ -721,14 +718,19 @@ int32_t screen_reader_srv(void* p) {
                 if(wait < timeout) timeout = wait;
             }
         }
+        if((!sr->desktop_subscription || !sr->dolphin) && timeout > SR_SUBSCRIBE_POLL_MS) {
+            timeout = SR_SUBSCRIBE_POLL_MS;
+        }
         uint32_t flags = furi_thread_flags_wait(SR_FLAG_ALL, FuriFlagWaitAny, timeout);
+        sr_subscribe_desktop(sr);
+        sr_subscribe_dolphin(sr);
         // A key press drops a held change before the frame the key causes is modelled
         if(__atomic_exchange_n(&sr->key_pressed, false, __ATOMIC_SEQ_CST)) {
             sr_throttle_clear(&sr->throttle);
         }
         if(flags & FuriFlagError) {
             // Timeout: the screen has settled, or waited long enough; or a held change or level
-            // up is due
+            // up is due; or the loop woke to subscribe, which it has just tried
             if(pending) {
                 pending = false;
                 sr_process(sr);
@@ -755,8 +757,6 @@ int32_t screen_reader_srv(void* p) {
                 sr_run_command(sr, command);
             }
         } else if(flags & SR_FLAG_FRAME) {
-            sr_subscribe_desktop(sr);
-            sr_subscribe_dolphin(sr);
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }

@@ -9,7 +9,9 @@
  * the reader on again, and every other key passes as an ordinary key. Back is handled alike in
  * both: its Short passes at once and its Long waits for the release, since a chord may still
  * come; a chord drops both. Down pressed while Back is held is held back in both, since only its
- * Short or its Long tells which chord it is; with the reader off a short one is lost.
+ * Short or its Long tells which chord it is; with the reader off a short one is lost. With the
+ * reader on the chord begins at Down's Press, off only at Down's Long: a Short of Back's between
+ * the two, Back let go first, is dropped with the reader on and passes with it off.
  */
 #pragma once
 
