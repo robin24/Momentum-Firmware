@@ -51,6 +51,9 @@ EXTRA_EXT_APPS = []
 # Left out of the build and of the card by the accessibility fork: app ids, and fap_category
 # values. The plugins of an app left out go with it. test_js is the JavaScript engine's
 # unit-test plugin; it also requires unit_tests, so it is kept unless named here explicitly.
+# An app that a metapackage still names (for example in applications/system/application.fam)
+# keeps deploying its resources to the card even when excluded here, so such an app must leave
+# the metapackage too, as js_app did.
 EXCLUDE_EXT_APPS = ["js_app", "cli_js", "test_js"]
 EXCLUDE_EXT_CATEGORIES = ["Games"]
 

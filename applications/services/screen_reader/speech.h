@@ -63,7 +63,8 @@ void speech_stop(Speech* speech);
 void speech_set_volume(Speech* speech, uint8_t volume);
 
 typedef struct {
-    bool enabled; /**< recorded clips are used when the vocabulary is present */
+    bool enabled; /**< recorded clips are used when the vocabulary is present;
+                       false means muted (sr voice off) */
     bool vocabulary; /**< /ext/sr/voice was found on the card */
     uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
     uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */

@@ -153,7 +153,8 @@ static void animation_manager_interact_callback(void* context) {
 
 // Animations off (anims_enabled false, the setting as read at alloc): nothing is ever loaded, so
 // the "new mail" animation that grants a pending level up on a key press never shows; the level
-// is granted here instead, whenever the manager is asked to look at the dolphin's state
+// is granted here instead, at boot (from alloc) and at every later check, whenever the manager
+// is asked to look at the dolphin's state
 static void animation_manager_grant_pending_levelup(void) {
     Dolphin* dolphin = furi_record_open(RECORD_DOLPHIN);
     DolphinStats stats = dolphin_stats(dolphin);
@@ -345,6 +346,8 @@ AnimationManager* animation_manager_alloc(void) {
         if(!animation_manager_check_blocking(animation_manager)) {
             animation_manager_start_new_idle(animation_manager);
         }
+    } else {
+        animation_manager_grant_pending_levelup();
     }
 
     return animation_manager;
