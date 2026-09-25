@@ -217,6 +217,11 @@ static void render_item_menu(Canvas* canvas, ArchiveBrowserViewModel* model) {
     }
 
     canvas_draw_icon(canvas, 74, 4 + (model->menu_idx + 1) * line_height, &I_ButtonRight_4x7);
+
+    // The selection is the arrow, not inverted text, so the screen reader is told the focused
+    // item by name, as the icon-only screens do; it then speaks each move of the cursor
+    ArchiveContextMenuItem_t* focused = menu_array_get(model->context_menu, model->menu_idx);
+    canvas_tap_hint_note(canvas, furi_string_get_cstr(focused->text), true);
 }
 
 static void archive_draw_frame(Canvas* canvas, uint16_t idx, bool scrollbar, bool moving) {
