@@ -255,7 +255,8 @@ static void sr_subscribe_dolphin(ScreenReader* sr) {
     sr->last_level = dolphin_stats(sr->dolphin).level;
 }
 
-// Storage's thread, on card events. Only a flag, and only for a mount: when the card was not
+// A storage thread, on card events (a mount is published from a helper thread the storage
+// service starts). Only a flag, and only for a mount: when the card was not
 // ready as the dolphin started, it loads its state on the mount and publishes nothing, so the
 // level the reader noted may be stale
 static void sr_storage_callback(const void* message, void* context) {
