@@ -51,6 +51,7 @@ typedef enum {
     /* Index of FS directory entry corresponding to FW update to be applied */
     FuriHalRtcRegisterUpdateFolderFSIndex,
     FuriHalRtcRegisterPinValue, /**< Encoded value of the currently set PIN */
+    FuriHalRtcRegisterFaultLr, /**< Return address of the last failed check, 0 when none */
 
     FuriHalRtcRegisterMAX, /**< Service value, do not use */
 } FuriHalRtcRegister;

@@ -180,6 +180,7 @@ static const Term terms[] = {
     {"WiFi", "why fye"},
     {"mAh", "milliamp hours"},
     {"MNTM", "momentum"},
+    {"XP", "experience"},
 };
 
 /** Rule 7: upper case words that are real words, read as words rather than spelled. */

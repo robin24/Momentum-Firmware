@@ -2,6 +2,7 @@
 #include "speech_queue.h"
 
 #include <furi.h>
+#include <furi_hal_rtc.h>
 #include <cli/cli.h>
 #include <toolbox/cli/cli_command.h>
 #include <toolbox/cli/cli_ansi.h>
@@ -173,6 +174,13 @@ static void sr_cli_status(ScreenReader* sr) {
     ScreenReaderStats stats;
     screen_reader_get_stats(sr, &stats);
     printf("enabled: %s\r\n", screen_reader_is_enabled(sr) ? "yes" : "no");
+    // The return address of the last failed check, kept across the reboot by check.c
+    uint32_t crash_address = furi_hal_rtc_get_register(FuriHalRtcRegisterFaultLr);
+    if(crash_address) {
+        printf("last crash: at %08lX\r\n", (unsigned long)crash_address);
+    } else {
+        printf("last crash: none\r\n");
+    }
     printf(
         "volume: %lu, verbosity: %lu, change delay: %lu ms\r\n",
         (unsigned long)momentum_settings.sr_volume,

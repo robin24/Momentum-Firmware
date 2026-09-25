@@ -34,7 +34,7 @@ static void render_callback(Canvas* canvas, void* _ctx) {
     DolphinStats* stats = ctx->stats;
 
     char level_str[12];
-    char xp_str[12];
+    char xp_str[16];
     const char* mood_str = NULL;
     const Icon* portrait = NULL;
 
@@ -85,7 +85,7 @@ static void render_callback(Canvas* canvas, void* _ctx) {
     if(stats->level == DOLPHIN_LEVEL_COUNT + 1) {
         snprintf(xp_str, sizeof(xp_str), "Max Level!");
     } else {
-        snprintf(xp_str, sizeof(xp_str), "%lu/%lu", xp_have, xp_target);
+        snprintf(xp_str, sizeof(xp_str), "XP %lu/%lu", xp_have, xp_target);
     }
     canvas_set_font(canvas, FontBatteryPercent);
     canvas_draw_str(canvas, 59, 42, xp_str);

@@ -179,6 +179,16 @@ FURI_NORETURN void __furi_crash_implementation(void) {
             ptr = (uint32_t) "Check serial logs";
         }
         furi_hal_rtc_set_fault_data(ptr);
+        // Keep the lr stored on entry (GET_MESSAGE_AND_STORE_REGISTERS, `str lr, [r12, #48]`,
+        // index 12) across the reboot: the return address into the function whose check failed.
+        // The desktop's crash popup shows it as "at 0803ABCD", `sr status` as "last crash".
+        // addr2line on that build's firmware.elf names the line of an address in flash; give it
+        // the address minus 2, inside the call, since the address itself is the instruction after
+        // the call, often a later line or another function because the call never returns. An
+        // address in RAM (0x2000xxxx) is inside an app loaded from the card and needs that app's
+        // elf. Writing an RTC backup register is the same call furi_hal_rtc_set_fault_data makes,
+        // safe with interrupts disabled.
+        furi_hal_rtc_set_register(FuriHalRtcRegisterFaultLr, __furi_check_registers[12]);
         furi_log_puts("\r\nRebooting system.\r\n");
         furi_log_puts("\033[0m\r\n");
         furi_hal_power_reset();

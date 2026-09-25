@@ -4,6 +4,13 @@
 
 #define DesktopFaultEventExit 0x00FF00FF
 
+/** The address line: a line break, "at " and eight hex digits */
+#define DESKTOP_FAULT_ADDRESS_LINE_LEN (sizeof("\nat 0803ABCD") - 1)
+
+/** The popup keeps a pointer to its text, so the text lives here rather than on the stack: the
+ * message, then "at" and the return address of the failed check (check.c) when one is kept */
+static char desktop_fault_text[64];
+
 void desktop_scene_fault_callback(void* context) {
     Desktop* desktop = (Desktop*)context;
     view_dispatcher_send_custom_event(desktop->view_dispatcher, DesktopFaultEventExit);
@@ -22,8 +29,23 @@ void desktop_scene_fault_on_enter(void* context) {
         AlignCenter,
         AlignCenter);
 
-    char* message = (char*)furi_hal_rtc_get_fault_data();
-    popup_set_text(popup, message, 64, 37 + STATUS_BAR_Y_SHIFT, AlignCenter, AlignCenter);
+    const char* message = (const char*)furi_hal_rtc_get_fault_data();
+    uint32_t address = furi_hal_rtc_get_register(FuriHalRtcRegisterFaultLr);
+    if(address) {
+        // The message is cut, if it must be, so that the address line always fits
+        int message_max = (int)(sizeof(desktop_fault_text) - DESKTOP_FAULT_ADDRESS_LINE_LEN - 1);
+        snprintf(
+            desktop_fault_text,
+            sizeof(desktop_fault_text),
+            "%.*s\nat %08lX",
+            message_max,
+            message,
+            (unsigned long)address);
+    } else {
+        snprintf(desktop_fault_text, sizeof(desktop_fault_text), "%s", message);
+    }
+    popup_set_text(
+        popup, desktop_fault_text, 64, 37 + STATUS_BAR_Y_SHIFT, AlignCenter, AlignCenter);
     popup_set_callback(popup, desktop_scene_fault_callback);
 
     view_dispatcher_switch_to_view(desktop->view_dispatcher, DesktopViewIdPopup);
@@ -54,5 +76,7 @@ void desktop_scene_fault_on_exit(void* context) {
     Popup* popup = desktop->popup;
     popup_reset(popup);
 
+    // The address register is left as it is: the last crash's address stays readable in
+    // `sr status` until the next crash
     furi_hal_rtc_set_fault_data(0);
 }
