@@ -233,6 +233,16 @@ vars.AddVariables(
         [],
     ),
     (
+        "EXCLUDE_EXT_APPS",
+        "List of app ids to leave out of the build and the resources",
+        [],
+    ),
+    (
+        "EXCLUDE_EXT_CATEGORIES",
+        "List of fap_category values whose apps are left out of the build and the resources",
+        [],
+    ),
+    (
         "APPSRC",
         "Application source directory for app to build & upload",
         "",

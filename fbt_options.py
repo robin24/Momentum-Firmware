@@ -48,6 +48,11 @@ SKIP_EXTERNAL = False
 # Appid's to include even when skipping externals
 EXTRA_EXT_APPS = []
 
+# Left out of the build and of the card by the accessibility fork: app ids, and fap_category
+# values. The plugins of an app left out go with it.
+EXCLUDE_EXT_APPS = ["js_app", "cli_js"]
+EXCLUDE_EXT_CATEGORIES = ["Games"]
+
 # Coprocessor firmware
 COPRO_OB_DATA = "scripts/ob.data"
 

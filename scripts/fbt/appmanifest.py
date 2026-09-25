@@ -230,6 +230,8 @@ class AppManager:
         ext_applist: List[str],
         hw_target: str,
         skip_external: bool = False,
+        exclude_apps: Optional[List[str]] = None,
+        exclude_categories: Optional[List[str]] = None,
     ):
         return AppBuildset(
             self,
@@ -237,6 +239,8 @@ class AppManager:
             appnames=applist,
             extra_ext_appnames=ext_applist,
             skip_external=skip_external,
+            exclude_apps=exclude_apps,
+            exclude_categories=exclude_categories,
         )
 
 
@@ -280,6 +284,8 @@ class AppBuildset:
         *,
         extra_ext_appnames: List[str],
         skip_external: bool = False,
+        exclude_apps: Optional[List[str]] = None,
+        exclude_categories: Optional[List[str]] = None,
         message_writer: Callable | None = None,
     ):
         self.appmgr = appmgr
@@ -287,6 +293,8 @@ class AppBuildset:
         self.incompatible_extapps, self.extapps = [], []
         self._extra_ext_appnames = extra_ext_appnames
         self._skip_external = skip_external
+        self._exclude_apps = set(exclude_apps or [])
+        self._exclude_categories = set(exclude_categories or [])
         self._orig_appnames = appnames
         self.hw_target = hw_target
         self._writer = message_writer if message_writer else self.print_writer
@@ -350,6 +358,22 @@ class AppBuildset:
             )
         ]
         extapps.extend(map(self.appmgr.get, self._extra_ext_appnames))
+
+        # Left out by the build configuration (EXCLUDE_EXT_APPS, EXCLUDE_EXT_CATEGORIES). Their
+        # plugins leave in _group_plugins, as the plugins of any app that is not built do
+        excluded = [
+            app
+            for app in extapps
+            if app.appid in self._exclude_apps or app.fap_category in self._exclude_categories
+        ]
+        if excluded:
+            extapps = [app for app in extapps if app not in excluded]
+            self._writer(
+                f"Excluded {len(excluded)} external apps by configuration: "
+                + ", ".join(sorted(app.appid for app in excluded))
+            )
+        for appid in sorted(self._exclude_apps - set(self.appmgr.known_apps)):
+            self._writer(f"EXCLUDE_EXT_APPS names an unknown app: {appid}")
 
         for app in extapps:
             (
