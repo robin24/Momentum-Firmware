@@ -212,12 +212,12 @@ FURI_NORETURN void __furi_crash_implementation(void) {
         // index 12) across the reboot, and the build that stored it, since updates keep the
         // register: the return address into the function whose check failed. The desktop's crash
         // popup shows it as "at 0803ABCD", `sr status` as "last crash: at 0803ABCD in build
-        // a2dfdd28". addr2line on that build's firmware.elf names the line of an address in
+        // 9028a849". addr2line on that build's firmware.elf names the line of an address in
         // flash; give it the address minus 2, inside the call, since the address itself is the
         // instruction after the call, often a later line or another function because the call
         // never returns. GCC merges identical crash-call sequences within a function, so the line
         // can be another check of the same function; the function is certain (addr2line -i adds
-        // the functions inlined there). An address starting with 20 (2000 to 2003) is inside an
+        // the chain of functions the named code was inlined into). An address starting with 20 (2000 to 2003) is inside an
         // app loaded from the card and needs that app's elf. Writing an RTC backup register is
         // the same call furi_hal_rtc_set_fault_data makes, safe with interrupts disabled.
         furi_hal_rtc_set_register(FuriHalRtcRegisterFaultLr, __furi_check_registers[12]);
