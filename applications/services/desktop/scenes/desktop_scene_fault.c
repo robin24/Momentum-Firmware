@@ -42,7 +42,13 @@ void desktop_scene_fault_on_enter(void* context) {
             message,
             (unsigned long)address);
     } else {
-        snprintf(desktop_fault_text, sizeof(desktop_fault_text), "%s", message);
+        // Read no further than the buffer holds: a message kept across an update can be stale
+        snprintf(
+            desktop_fault_text,
+            sizeof(desktop_fault_text),
+            "%.*s",
+            (int)(sizeof(desktop_fault_text) - 1),
+            message);
     }
     popup_set_text(
         popup, desktop_fault_text, 64, 37 + STATUS_BAR_Y_SHIFT, AlignCenter, AlignCenter);

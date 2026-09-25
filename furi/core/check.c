@@ -7,6 +7,7 @@
 #include <furi_hal_debug.h>
 #include <furi_hal_bt.h>
 #include <furi_hal_interrupt.h>
+#include <toolbox/version.h>
 #include <stdio.h>
 
 #include <FreeRTOS.h>
@@ -134,6 +135,34 @@ static void __furi_print_name(bool isr) {
     }
 }
 
+/** The first eight hex digits of this build's git hash as a number, 0 when unknown: the value
+ * kept beside the crash address, so the address is decoded with the right build. The hash is a
+ * literal in flash; its pointer sits in RAM, which the crash may have overwritten, so it is used
+ * only when it points into flash. Nothing here allocates or locks. */
+static uint32_t __furi_crash_build_id(void) {
+    const char* hash = version_get_githash(version_get());
+    uint32_t start = (uint32_t)hash;
+    if(start < FLASH_BASE || start > (FLASH_BASE + FLASH_SIZE - 8)) {
+        return 0;
+    }
+    uint32_t value = 0;
+    for(size_t i = 0; i < 8; i++) {
+        char c = hash[i];
+        uint32_t digit;
+        if(c >= '0' && c <= '9') {
+            digit = c - '0';
+        } else if(c >= 'a' && c <= 'f') {
+            digit = c - 'a' + 10;
+        } else if(c >= 'A' && c <= 'F') {
+            digit = c - 'A' + 10;
+        } else {
+            return 0;
+        }
+        value = (value << 4) | digit;
+    }
+    return value;
+}
+
 FURI_NORETURN void __furi_crash_implementation(void) {
     __disable_irq();
     GET_MESSAGE_AND_STORE_REGISTERS();
@@ -180,15 +209,19 @@ FURI_NORETURN void __furi_crash_implementation(void) {
         }
         furi_hal_rtc_set_fault_data(ptr);
         // Keep the lr stored on entry (GET_MESSAGE_AND_STORE_REGISTERS, `str lr, [r12, #48]`,
-        // index 12) across the reboot: the return address into the function whose check failed.
-        // The desktop's crash popup shows it as "at 0803ABCD", `sr status` as "last crash".
-        // addr2line on that build's firmware.elf names the line of an address in flash; give it
-        // the address minus 2, inside the call, since the address itself is the instruction after
-        // the call, often a later line or another function because the call never returns. An
-        // address in RAM (0x2000xxxx) is inside an app loaded from the card and needs that app's
-        // elf. Writing an RTC backup register is the same call furi_hal_rtc_set_fault_data makes,
-        // safe with interrupts disabled.
+        // index 12) across the reboot, and the build that stored it, since updates keep the
+        // register: the return address into the function whose check failed. The desktop's crash
+        // popup shows it as "at 0803ABCD", `sr status` as "last crash: at 0803ABCD in build
+        // a2dfdd28". addr2line on that build's firmware.elf names the line of an address in
+        // flash; give it the address minus 2, inside the call, since the address itself is the
+        // instruction after the call, often a later line or another function because the call
+        // never returns. GCC merges identical crash-call sequences within a function, so the line
+        // can be another check of the same function; the function is certain (addr2line -i adds
+        // the functions inlined there). An address starting with 20 (2000 to 2003) is inside an
+        // app loaded from the card and needs that app's elf. Writing an RTC backup register is
+        // the same call furi_hal_rtc_set_fault_data makes, safe with interrupts disabled.
         furi_hal_rtc_set_register(FuriHalRtcRegisterFaultLr, __furi_check_registers[12]);
+        furi_hal_rtc_set_register(FuriHalRtcRegisterFaultBuild, __furi_crash_build_id());
         furi_log_puts("\r\nRebooting system.\r\n");
         furi_log_puts("\033[0m\r\n");
         furi_hal_power_reset();

@@ -52,6 +52,8 @@ typedef enum {
     FuriHalRtcRegisterUpdateFolderFSIndex,
     FuriHalRtcRegisterPinValue, /**< Encoded value of the currently set PIN */
     FuriHalRtcRegisterFaultLr, /**< Return address of the last failed check, 0 when none */
+    /** First eight hex digits of the git hash of the build that stored FaultLr, 0 when unknown */
+    FuriHalRtcRegisterFaultBuild,
 
     FuriHalRtcRegisterMAX, /**< Service value, do not use */
 } FuriHalRtcRegister;
