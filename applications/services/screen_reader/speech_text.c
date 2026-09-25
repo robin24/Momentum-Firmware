@@ -1,7 +1,7 @@
 /**
  * @file speech_text.c
- * Pronunciation rewriting and chunking for the screen reader's speech. The rule numbers are the
- * plan's; a token goes through rules 3, 6, 5, 4 with 12, 7, 13 and 8 in that order.
+ * Pronunciation rewriting for the screen reader's speech. The rule numbers are the plan's; a
+ * token goes through rules 3, 6, 5, 4 with 12, 7, 13 and 8 in that order.
  *
  * 1. A one character announcement is named: a letter by its upper case letter (A as "ay"), a
  *    digit by its word, punctuation by its name.
@@ -18,11 +18,11 @@
  *    are spelled by runs: one to five letters character by character unless the run is a stop
  *    word, longer letter runs as a word, one to three digits as a number, longer digit runs
  *    digit by digit.
- * 8. Other tokens are copied, in pieces of at most 20 characters: the synthesizer never returns
- *    on words of about 30 letters.
+ * 8. Other tokens are copied, in pieces of at most 20 characters, each short enough for a clip
+ *    name.
  * 9. Between tokens, sentence punctuation is attached to the previous word, a colon becomes a
  *    comma (a space between digits), symbols become words, everything else a single space.
- * 10. Chunks end at a sentence, a comma or a word boundary when possible.
+ * 10. Retired: the text is no longer cut into chunks, the clips play it word by word.
  * 11. A hyphen before a digit that is not inside a token is "minus".
  * 12. A hyphen with a digit on at least one side: "to" as the only hyphen between two digit runs
  *    of the same length, a space between a digit run and two or more letters, "dash" otherwise.
@@ -572,48 +572,4 @@ size_t speech_text_spell_copy(const char* in, char* out, size_t out_size) {
     }
     out[o] = '\0';
     return o;
-}
-
-size_t speech_text_next_chunk(const char* text, size_t* pos, char* chunk, size_t chunk_size) {
-    if(chunk_size == 0) return 0;
-    chunk[0] = '\0';
-    if(chunk_size < 2 || !text) return 0;
-    size_t len = strlen(text);
-    size_t start = *pos;
-    while(start < len && text[start] == ' ')
-        start++;
-    if(start >= len) {
-        *pos = len;
-        return 0;
-    }
-    size_t max = SPEECH_CHUNK_MAX;
-    if(max > chunk_size - 1) max = chunk_size - 1;
-    size_t remaining = len - start;
-    size_t take = remaining;
-    if(remaining > max) {
-        // The last sentence end within the limit, else the last comma, else the last space.
-        // text[i + 1] is inside the text: the limit ends before the text does.
-        size_t best = 0;
-        for(size_t i = start; i < start + max; i++) {
-            char c = text[i];
-            if((c == '.' || c == '?' || c == '!') && text[i + 1] == ' ') best = i + 1 - start;
-        }
-        if(!best) {
-            for(size_t i = start; i < start + max; i++) {
-                if(text[i] == ',' && text[i + 1] == ' ') best = i + 1 - start;
-            }
-        }
-        if(!best) {
-            for(size_t i = start; i < start + max; i++) {
-                if(text[i] == ' ') best = i - start;
-            }
-        }
-        take = best ? best : max;
-    }
-    memcpy(chunk, text + start, take);
-    chunk[take] = '\0';
-    *pos = start + take;
-    while(take && chunk[take - 1] == ' ')
-        chunk[--take] = '\0';
-    return take;
 }

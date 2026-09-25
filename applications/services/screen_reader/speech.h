@@ -1,8 +1,8 @@
 /**
  * @file speech.h
- * Speech engine: a worker thread that renders queued utterances with SAM and plays them
- * through the speaker with DMA. Announcements come from the screen reader service; the console
- * command "sr say" uses it too.
+ * Speech engine: a worker thread that plays queued utterances from the recorded voice's clips on
+ * the card, through the speaker with DMA. Announcements come from the screen reader service; the
+ * console command "sr say" uses it too.
  */
 #pragma once
 
@@ -44,8 +44,8 @@ void speech_say_parts(Speech* speech, const char* text);
 
 /** Queue text to be spelled: what is being said stops and what waits is dropped, as with an
  *  interrupting speech_say. Every word is spelled with the letter and digit clips, 60 ms between
- *  letters and 150 ms between words; SAM says the letters one by one when the recorded voice is
- *  off or missing. A text without letters or digits is said instead (an underscore key). */
+ *  letters and 150 ms between words. With the voice off, or without a vocabulary on the card,
+ *  nothing is played. A text without letters or digits is said instead (an underscore key). */
 void speech_say_spelled(Speech* speech, const char* text);
 
 /** Play a file of raw unsigned 8 bit mono samples (128 is silence) from the card in place of
@@ -59,8 +59,8 @@ void speech_play(Speech* speech, const char* path, uint32_t rate);
  *  thread), never interrupts. */
 void speech_stop(Speech* speech);
 
-/** rate is the SAM speed (40..120), volume 0..100. Applied from the next utterance on. */
-void speech_set_voice(Speech* speech, uint8_t rate, uint8_t volume);
+/** volume 0..100, applied from the next utterance on. */
+void speech_set_volume(Speech* speech, uint8_t volume);
 
 typedef struct {
     bool enabled; /**< recorded clips are used when the vocabulary is present */
@@ -68,12 +68,15 @@ typedef struct {
     uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
     uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */
     uint32_t missing_words; /**< distinct words recorded in /ext/sr/missing.txt since boot */
+    uint32_t muted; /**< items completed silently since boot: the voice off, or no vocabulary */
     uint32_t open_max_ms; /**< longest clip open since boot, found or not */
     uint32_t open_last_ms; /**< the latest clip open */
     char settings[64]; /**< first line of /ext/sr/voice/voice.txt, empty when absent */
 } SpeechVoiceStats;
 
-/** Recorded voice on or off, from the next utterance on; off means SAM speaks everything. */
+/** Recorded voice on or off, from the next utterance on. Off mutes: a text item completes at
+ *  once, no file is opened, nothing is played, until on again or a reboot; it is the guard the
+ *  generator sets around a sync. */
 void speech_set_voice_clips(Speech* speech, bool enabled);
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);

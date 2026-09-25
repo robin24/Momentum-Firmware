@@ -177,12 +177,10 @@ static void sr_input_filter(const InputEvent* event, InputFilterResult* result, 
     if(command != SrChordNone) screen_reader_run_command(sr, command);
 }
 
-// The rate, volume and voice as saved, pushed before the reader speaks: the settings app writes
-// momentum_settings and its changes apply from the next announcement on (two cheap stores)
-static void sr_push_voice(ScreenReader* sr) {
-    speech_set_voice(
-        sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)momentum_settings.sr_volume);
-    speech_set_voice_clips(sr->speech, momentum_settings.sr_voice);
+// The volume as saved, pushed before the reader speaks: the settings app writes
+// momentum_settings and its change applies from the next announcement on (one cheap store)
+static void sr_push_volume(ScreenReader* sr) {
+    speech_set_volume(sr->speech, (uint8_t)momentum_settings.sr_volume);
 }
 
 // Desktop thread, from desktop_lock and desktop_unlock. Only desktop_unlock publishes locked
@@ -210,13 +208,13 @@ static void sr_subscribe_desktop(ScreenReader* sr) {
 }
 
 // Every announcement that is said goes through here, with the mutex held: counted, said while
-// the reader is on (with the voice as saved), and mirrored to the console. It interrupts what is
+// the reader is on (at the volume as saved), and mirrored to the console. It interrupts what is
 // being said when it asks to; a change on the same screen waits its turn instead and replaces a
 // change still waiting
 static void sr_announce(ScreenReader* sr, const SrAnnouncement* a) {
     sr->stats.announcements++;
     if(momentum_settings.screen_reader) {
-        sr_push_voice(sr);
+        sr_push_volume(sr);
         speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
     }
     if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
@@ -342,7 +340,7 @@ static void sr_say_held_change(ScreenReader* sr) {
 static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
     char* text = malloc(SR_DESCRIBE_TEXT_MAX);
     const SrScreen* screen = &sr->model.prev;
-    sr_push_voice(sr);
+    sr_push_volume(sr);
     switch(command) {
     case SrChordReadAll:
         sr_screen_describe(screen, text, SR_DESCRIBE_TEXT_MAX);
@@ -381,7 +379,7 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
         if(v > 100) v = 100;
         momentum_settings.sr_volume = (uint32_t)v;
         momentum_settings_save();
-        speech_set_voice(sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)v);
+        speech_set_volume(sr->speech, (uint8_t)v);
         snprintf(text, SR_DESCRIBE_TEXT_MAX, "Volume %d", v);
         speech_say(sr->speech, text, true, false);
         break;
@@ -463,9 +461,7 @@ int32_t screen_reader_srv(void* p) {
     sr_model_init(&sr->model, momentum_settings.sr_verbosity);
     sr_throttle_init(&sr->throttle);
     sr->speech = speech_alloc();
-    speech_set_voice(
-        sr->speech, (uint8_t)momentum_settings.sr_rate, (uint8_t)momentum_settings.sr_volume);
-    speech_set_voice_clips(sr->speech, momentum_settings.sr_voice);
+    speech_set_volume(sr->speech, (uint8_t)momentum_settings.sr_volume);
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);

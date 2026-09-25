@@ -110,10 +110,8 @@ typedef struct {
     ScreenFrameColor rpc_color_fg;
     ScreenFrameColor rpc_color_bg;
     bool screen_reader;
-    uint32_t sr_rate;
     uint32_t sr_volume;
     uint32_t sr_verbosity;
-    bool sr_voice;
     uint32_t sr_change_ms;
 } MomentumSettings;
 

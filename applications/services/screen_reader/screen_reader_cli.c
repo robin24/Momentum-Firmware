@@ -85,7 +85,6 @@ static void sr_cli_usage(void) {
     printf("  status   show state and counters\r\n");
     printf("  say <text>   speak text now; sr status shows its timing when done\r\n");
     printf("  stop         stop speaking\r\n");
-    printf("  rate <n>     SAM speed 40..120, bigger is slower (saved)\r\n");
     printf("  volume <n>   0..100 (saved)\r\n");
     printf(
         "  delay <ms>   change delay %d..%d: a same-screen change is said at most once per\r\n"
@@ -94,7 +93,7 @@ static void sr_cli_usage(void) {
         SR_CHANGE_MS_MAX);
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
-        "  voice on|off|status  recorded word clips from the card, spelled letters for the rest (saved)\r\n");
+        "  voice on|off|status  recorded word clips from the card; off mutes speech until on or a reboot\r\n");
     printf(
         "  chord up|down|ok|okhold|left|right  what Back plus that key does: screen, status bar,\r\n"
         "               focus, focus spelled, volume down, volume up\r\n");
@@ -138,7 +137,7 @@ static void sr_cli_print_voice(ScreenReader* sr) {
     SpeechVoiceStats v;
     speech_get_voice_stats(screen_reader_get_speech(sr), &v);
     printf(
-        "voice: %s, vocabulary %s%s%s, clips %lu, fallback %lu, missing %lu, open max %lu ms, last %lu ms\r\n",
+        "voice: %s, vocabulary %s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, open max %lu ms, last %lu ms\r\n",
         v.enabled ? "on" : "off",
         v.vocabulary ? "yes" : "no",
         v.settings[0] ? " " : "",
@@ -146,6 +145,7 @@ static void sr_cli_print_voice(ScreenReader* sr) {
         (unsigned long)v.clip_words,
         (unsigned long)v.fallback_words,
         (unsigned long)v.missing_words,
+        (unsigned long)v.muted,
         (unsigned long)v.open_max_ms,
         (unsigned long)v.open_last_ms);
 }
@@ -154,15 +154,11 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
     FuriString* sub = furi_string_alloc();
     bool has = args_read_string_and_trim(args, sub);
     if(has && furi_string_cmp_str(sub, "on") == 0) {
-        momentum_settings.sr_voice = true;
-        momentum_settings_save();
         speech_set_voice_clips(screen_reader_get_speech(sr), true);
         printf("voice on\r\n");
     } else if(has && furi_string_cmp_str(sub, "off") == 0) {
-        momentum_settings.sr_voice = false;
-        momentum_settings_save();
         speech_set_voice_clips(screen_reader_get_speech(sr), false);
-        printf("voice off: SAM speaks everything\r\n");
+        printf("voice off: muted until sr voice on or a reboot\r\n");
     } else if(!has || furi_string_cmp_str(sub, "status") == 0) {
         sr_cli_print_voice(sr);
     } else {
@@ -176,8 +172,7 @@ static void sr_cli_status(ScreenReader* sr) {
     screen_reader_get_stats(sr, &stats);
     printf("enabled: %s\r\n", screen_reader_is_enabled(sr) ? "yes" : "no");
     printf(
-        "rate: %lu, volume: %lu, verbosity: %lu, change delay: %lu ms\r\n",
-        (unsigned long)momentum_settings.sr_rate,
+        "volume: %lu, verbosity: %lu, change delay: %lu ms\r\n",
         (unsigned long)momentum_settings.sr_volume,
         (unsigned long)momentum_settings.sr_verbosity,
         (unsigned long)momentum_settings.sr_change_ms);
@@ -297,25 +292,16 @@ static void sr_cli_chord(ScreenReader* sr, FuriString* args) {
     furi_string_free(key);
 }
 
-static void sr_cli_set_number(ScreenReader* sr, FuriString* args, bool rate) {
+static void sr_cli_set_volume(ScreenReader* sr, FuriString* args) {
     int value = 0;
-    int lo = rate ? 40 : 0;
-    int hi = rate ? 120 : 100;
-    if(!args_read_int_and_trim(args, &value) || value < lo || value > hi) {
-        printf("expected a number from %d to %d\r\n", lo, hi);
+    if(!args_read_int_and_trim(args, &value) || value < 0 || value > 100) {
+        printf("expected a number from 0 to 100\r\n");
         return;
     }
-    if(rate) {
-        momentum_settings.sr_rate = (uint32_t)value;
-    } else {
-        momentum_settings.sr_volume = (uint32_t)value;
-    }
+    momentum_settings.sr_volume = (uint32_t)value;
     momentum_settings_save();
-    speech_set_voice(
-        screen_reader_get_speech(sr),
-        (uint8_t)momentum_settings.sr_rate,
-        (uint8_t)momentum_settings.sr_volume);
-    printf("%s set to %d\r\n", rate ? "rate" : "volume", value);
+    speech_set_volume(screen_reader_get_speech(sr), (uint8_t)value);
+    printf("volume set to %d\r\n", value);
 }
 
 // The reader reads the setting at every change, so the new delay applies from the next one on
@@ -360,10 +346,8 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
         } else if(furi_string_cmp_str(cmd, "stop") == 0) {
             speech_stop(screen_reader_get_speech(sr));
             printf("stopped\r\n");
-        } else if(furi_string_cmp_str(cmd, "rate") == 0) {
-            sr_cli_set_number(sr, args, true);
         } else if(furi_string_cmp_str(cmd, "volume") == 0) {
-            sr_cli_set_number(sr, args, false);
+            sr_cli_set_volume(sr, args);
         } else if(furi_string_cmp_str(cmd, "delay") == 0) {
             sr_cli_delay(args);
         } else if(furi_string_cmp_str(cmd, "play") == 0) {

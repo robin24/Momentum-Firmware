@@ -25,9 +25,8 @@ void speech_pcm_set_volume(SpeechPcm* pcm, uint8_t volume_percent) {
     }
 }
 
-void speech_pcm_init(SpeechPcm* pcm, uint8_t volume_percent, uint32_t overhead_ns) {
+void speech_pcm_init(SpeechPcm* pcm, uint8_t volume_percent) {
     memset(pcm, 0, sizeof(*pcm));
-    pcm->overhead_ns = overhead_ns;
     speech_pcm_set_volume(pcm, volume_percent);
 }
 
@@ -41,27 +40,6 @@ void speech_pcm_reset(SpeechPcm* pcm) {
 
 uint8_t speech_pcm_silence(const SpeechPcm* pcm) {
     return pcm->lut[SPEECH_SILENCE_VALUE];
-}
-
-bool speech_pcm_push(
-    SpeechPcm* pcm,
-    const uint8_t values[5],
-    uint16_t delta,
-    SpeechPcmEmit emit,
-    void* context) {
-    uint32_t hold_ns = (uint32_t)(delta / 8) * 1000u + pcm->overhead_ns;
-    pcm->subsamples += 5;
-    pcm->nominal_us += 5u * (delta / 8);
-    for(int k = 0; k < 5; k++) {
-        uint64_t end_ns = pcm->now_ns + hold_ns;
-        while(pcm->next_slot_ns < end_ns) {
-            if(!emit(pcm->lut[values[k]], context)) return false;
-            pcm->slots++;
-            pcm->next_slot_ns += SPEECH_SLOT_NS;
-        }
-        pcm->now_ns = end_ns;
-    }
-    return true;
 }
 
 bool speech_pcm_push_raw(

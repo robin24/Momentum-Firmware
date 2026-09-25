@@ -1,6 +1,5 @@
 #include "speech.h"
 
-#include "sam/sam.h"
 #include "speech_hw.h"
 #include "speech_pcm.h"
 #include "speech_queue.h"
@@ -14,7 +13,6 @@
 
 #define SPEECH_RING_SIZE          8192 /* two halves of 82 ms at 20 us per slot */
 #define SPEECH_HALF               (SPEECH_RING_SIZE / 2)
-#define SPEECH_OVERHEAD_NS        7400 /* calibrated against the Text to SAM demo, Task 5 */
 #define SPEECH_IDLE_RELEASE_MS    200
 #define SPEECH_ACQUIRE_TIMEOUT_MS 500
 #define SPEECH_EVENT_TIMEOUT_MS   200
@@ -48,7 +46,6 @@ struct Speech {
     SpeechStats stats;
 
     // Set by any thread, read by the worker
-    volatile uint8_t rate;
     volatile uint8_t volume;
     volatile bool voice_enabled;
 
@@ -63,7 +60,6 @@ struct Speech {
     uint32_t started; /* tick at which the rendering of the current item began */
     uint8_t lut_volume;
     char expanded[SPEECH_TEXT_MAX];
-    char chunk[SPEECH_CHUNK_MAX + 2]; /* room for an appended period */
 
     // Recorded voice: written by the worker only, speech_get_voice_stats reads a snapshot
     bool vocabulary; /* SPEECH_VOICE_DIR was found on the card */
@@ -73,6 +69,7 @@ struct Speech {
     char path[SPEECH_VOICE_PATH_MAX];
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
     uint32_t open_last_ms;
+    uint32_t muted; /* items completed silently: voice off, or no vocabulary on the card */
 };
 
 static void speech_lock(Speech* speech) {
@@ -157,11 +154,6 @@ static bool speech_emit(uint8_t duty, void* context) {
     }
     speech->fill_half = next;
     return true;
-}
-
-static bool speech_sam_output(const uint8_t values[5], uint16_t delta, void* context) {
-    Speech* speech = context;
-    return speech_pcm_push(&speech->pcm, values, delta, speech_emit, speech);
 }
 
 /**
@@ -361,42 +353,12 @@ static bool speech_play_clip(Speech* speech, const char* path) {
 }
 
 /**
- * SAM speaks the chunk buffer, upper cased. A closing period gives the synthesizer a pause to
- * shape the end on. The reciter inside SAM stops at a word boundary once its phoneme string is
- * full and reports how much text it used; the rest goes to further calls.
- */
-static void speech_sam_chunk(Speech* speech, const SamVoice* voice) {
-    for(char* p = speech->chunk; *p; p++) {
-        if(*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
-    }
-    size_t len = strlen(speech->chunk);
-    if(len > 0 && len < sizeof(speech->chunk) - 1 &&
-       strchr(".?!,", speech->chunk[len - 1]) == NULL) {
-        speech->chunk[len] = '.';
-        speech->chunk[len + 1] = '\0';
-        len++;
-    }
-    size_t offset = 0;
-    while(offset < len && !speech->aborted) {
-        size_t consumed = 0;
-        sam_speak(speech->chunk + offset, voice, speech_sam_output, speech, &consumed);
-        if(consumed == 0) break;
-        offset += consumed;
-    }
-}
-
-/** SAM speaks a word: the last resort for a spelled character whose clip is missing too. */
-static void speech_sam_word(Speech* speech, const char* word, const SamVoice* voice) {
-    strlcpy(speech->chunk, word, sizeof(speech->chunk) - 1);
-    speech_sam_chunk(speech, voice);
-}
-
-/**
  * A word the vocabulary lacks is spelled with the letter and digit clips, a short gap between
- * them; a character whose clip is missing too is spoken by SAM as the last resort. Each letter
- * played from a clip counts as a clip in the voice status.
+ * them. A character whose clip is missing too is skipped after the gap and its clip name is
+ * recorded as missing, once per boot, like a word. Each letter played from a clip counts as a
+ * clip in the voice status.
  */
-static void speech_spell_word(Speech* speech, const char* word, const SamVoice* voice) {
+static void speech_spell_word(Speech* speech, const char* word) {
     char name[3];
     for(const char* p = word; *p != '\0' && !speech->aborted; p++) {
         if(!speech_voice_letter_clip(*p, name)) continue;
@@ -406,7 +368,7 @@ static void speech_spell_word(Speech* speech, const char* word, const SamVoice* 
             speech->voice.clip_words++;
             continue;
         }
-        speech_sam_word(speech, name, voice);
+        speech_voice_missing(&speech->voice, name);
     }
 }
 
@@ -417,7 +379,7 @@ static void speech_spell_word(Speech* speech, const char* word, const SamVoice* 
  * only speaks nothing, but its pause still goes between its neighbours. A spelled item spells
  * every word, with at least SPEECH_SPELL_WORD_GAP_MS between words.
  */
-static void speech_speak_words(Speech* speech, const SamVoice* voice, bool spell) {
+static void speech_speak_words(Speech* speech, bool spell) {
     size_t pos = 0;
     SpeechVoiceWord word;
     uint32_t pending_pause_ms = 0;
@@ -430,7 +392,7 @@ static void speech_speak_words(Speech* speech, const SamVoice* voice, bool spell
         if(word.word[0] == '\0') continue;
         if(spell) {
             // Asked for: its letters count as clips, the word is neither a fallback nor missing
-            speech_spell_word(speech, word.word, voice);
+            speech_spell_word(speech, word.word);
         } else if(
             speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
             speech_play_clip(speech, speech->path)) {
@@ -438,7 +400,7 @@ static void speech_speak_words(Speech* speech, const SamVoice* voice, bool spell
         } else {
             speech->voice.fallback_words++;
             speech_voice_missing(&speech->voice, word.word);
-            speech_spell_word(speech, word.word, voice);
+            speech_spell_word(speech, word.word);
         }
     }
 }
@@ -463,37 +425,16 @@ static void speech_write_missing(Speech* speech) {
     if(opened) speech_voice_log_clear(&speech->voice);
 }
 
-/**
- * A spelled item without the recorded voice: SAM says the letters and digits one by one, A as
- * "AY" because a lone A is read as the article, with a comma between words for a pause. The
- * chunk buffer takes as many as fit and is spoken before it is filled again.
- */
-static void speech_sam_spell(Speech* speech, const SamVoice* voice) {
-    const char* p = speech->expanded;
-    while(*p != '\0' && !speech->aborted) {
-        size_t len = 0;
-        // "AY " is the longest piece; the closing period and the terminator have the two bytes
-        // the buffer holds beyond SPEECH_CHUNK_MAX
-        for(; *p != '\0' && len + 3 <= SPEECH_CHUNK_MAX; p++) {
-            if(*p == ' ') {
-                if(len >= 2 && speech->chunk[len - 2] != ',') {
-                    speech->chunk[len - 1] = ',';
-                    speech->chunk[len++] = ' ';
-                }
-                continue;
-            }
-            speech->chunk[len++] = *p;
-            if(*p == 'a' || *p == 'A') speech->chunk[len++] = 'Y';
-            speech->chunk[len++] = ' ';
-        }
-        while(len > 0 && (speech->chunk[len - 1] == ' ' || speech->chunk[len - 1] == ','))
-            len--;
-        speech->chunk[len] = '\0';
-        if(len > 0) speech_sam_chunk(speech, voice);
-    }
-}
-
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
+    // Muted (sr voice off), or no vocabulary on the card: the item completes at once, without
+    // the speaker, a file or the missing list; the voice status counts it
+    if(!speech->voice_enabled || !speech_voice_ready(speech)) {
+        speech->muted++;
+        speech_lock(speech);
+        speech->stats.speaking = false;
+        speech_unlock(speech);
+        return;
+    }
     if(!speech_item_begin(speech, item)) return;
 
     // A spelled item keeps its own letters and digits; one without any is said instead
@@ -502,29 +443,10 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
         spell = speech_text_spell_copy(item->text, speech->expanded, sizeof(speech->expanded)) > 0;
     }
     if(!spell) speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
-    SamVoice voice = SAM_VOICE_DEFAULT;
-    voice.speed = speech->rate;
     speech->started = furi_get_tick();
-
-    if(speech->voice_enabled && speech_voice_ready(speech)) {
-        speech_speak_words(speech, &voice, spell);
-        speech_item_end(speech);
-        speech_write_missing(speech);
-        return;
-    }
-
-    if(spell) {
-        speech_sam_spell(speech, &voice);
-    } else {
-        size_t pos = 0;
-        while(
-            !speech->aborted &&
-            speech_text_next_chunk(speech->expanded, &pos, speech->chunk, sizeof(speech->chunk))) {
-            speech_sam_chunk(speech, &voice);
-        }
-    }
-
+    speech_speak_words(speech, spell);
     speech_item_end(speech);
+    speech_write_missing(speech);
 }
 
 static uint32_t speech_clamp_rate(uint32_t rate) {
@@ -609,10 +531,9 @@ Speech* speech_alloc(void) {
     memset(speech, 0, sizeof(Speech));
     speech->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     speech_queue_init(&speech->queue);
-    speech->rate = 72;
     speech->volume = 100;
     speech->lut_volume = 100;
-    speech_pcm_init(&speech->pcm, 100, SPEECH_OVERHEAD_NS);
+    speech_pcm_init(&speech->pcm, 100);
     speech->storage = furi_record_open(RECORD_STORAGE);
     speech->file_buffer = malloc(SPEECH_FILE_CHUNK);
     speech->voice_file = storage_file_alloc(speech->storage);
@@ -699,9 +620,8 @@ void speech_stop(Speech* speech) {
     furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_STOP);
 }
 
-void speech_set_voice(Speech* speech, uint8_t rate, uint8_t volume) {
+void speech_set_volume(Speech* speech, uint8_t volume) {
     furi_check(speech);
-    speech->rate = rate;
     speech->volume = volume;
 }
 
@@ -736,6 +656,7 @@ void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     out->clip_words = *(volatile uint32_t*)&speech->voice.clip_words;
     out->fallback_words = *(volatile uint32_t*)&speech->voice.fallback_words;
     out->missing_words = *(volatile uint32_t*)&speech->voice.missing_words;
+    out->muted = *(volatile uint32_t*)&speech->muted;
     out->open_max_ms = *(volatile uint32_t*)&speech->open_max_ms;
     out->open_last_ms = *(volatile uint32_t*)&speech->open_last_ms;
     strncpy(out->settings, speech->voice_settings, sizeof(out->settings) - 1);

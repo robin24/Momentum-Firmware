@@ -48,10 +48,8 @@ MomentumSettings momentum_settings = {
     .rpc_color_fg = {{ScreenColorModeDefault, {.value = 0x000000}}}, // Default Black
     .rpc_color_bg = {{ScreenColorModeDefault, {.value = 0xFF8200}}}, // Default Orange
     .screen_reader = false, // OFF
-    .sr_rate = 72, // SAM speed, bigger is slower
     .sr_volume = 100, // %
     .sr_verbosity = 1, // Normal
-    .sr_voice = true, // recorded voice from the card
     .sr_change_ms = SR_CHANGE_MS_DEFAULT, // a same-screen change is said at most once per 3 s
 };
 
@@ -128,10 +126,8 @@ static const struct {
     {setting_uint(rpc_color_fg, 0x000000, 0xFFFFFF)},
     {setting_uint(rpc_color_bg, 0x000000, 0xFFFFFF)},
     {setting_bool(screen_reader)},
-    {setting_uint(sr_rate, 40, 120)},
     {setting_uint(sr_volume, 0, 100)},
     {setting_uint(sr_verbosity, 0, 2)},
-    {setting_bool(sr_voice)},
     {setting_uint(sr_change_ms, SR_CHANGE_MS_MIN, SR_CHANGE_MS_MAX)},
 };
 
