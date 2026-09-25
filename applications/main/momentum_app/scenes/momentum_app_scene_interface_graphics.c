@@ -1,6 +1,7 @@
 #include "../momentum_app.h"
 
 enum VarItemListIndex {
+    VarItemListIndexAnimations,
     VarItemListIndexAssetPack,
     VarItemListIndexAnimSpeed,
     VarItemListIndexCycleAnims,
@@ -10,6 +11,17 @@ enum VarItemListIndex {
 void momentum_app_scene_interface_graphics_var_item_list_callback(void* context, uint32_t index) {
     MomentumApp* app = context;
     view_dispatcher_send_custom_event(app->view_dispatcher, index);
+}
+
+// The animation manager has no state for "never loaded", so the change applies at the next
+// boot: the app shows its "Rebooting..." popup on exit like its other reboot-bound settings
+static void momentum_app_scene_interface_graphics_animations_changed(VariableItem* item) {
+    MomentumApp* app = variable_item_get_context(item);
+    bool value = variable_item_get_current_value_index(item);
+    variable_item_set_current_value_text(item, value ? "ON" : "OFF");
+    momentum_settings.desktop_anims = value;
+    app->save_settings = true;
+    app->require_reboot = true;
 }
 
 static void momentum_app_scene_interface_graphics_asset_pack_changed(VariableItem* item) {
@@ -117,6 +129,15 @@ void momentum_app_scene_interface_graphics_on_enter(void* context) {
     VariableItemList* var_item_list = app->var_item_list;
     VariableItem* item;
     uint8_t value_index;
+
+    item = variable_item_list_add(
+        var_item_list,
+        "Animations",
+        2,
+        momentum_app_scene_interface_graphics_animations_changed,
+        app);
+    variable_item_set_current_value_index(item, momentum_settings.desktop_anims);
+    variable_item_set_current_value_text(item, momentum_settings.desktop_anims ? "ON" : "OFF");
 
     item = variable_item_list_add(
         var_item_list,

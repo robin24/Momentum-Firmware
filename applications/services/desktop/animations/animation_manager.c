@@ -149,9 +149,23 @@ static void animation_manager_interact_callback(void* context) {
     }
 }
 
+// Animations off (momentum_settings.desktop_anims false): nothing is ever loaded, so the
+// "new mail" animation that grants a pending level up on a key press never shows; the level
+// is granted here instead, whenever the manager is asked to look at the dolphin's state
+static void animation_manager_grant_pending_levelup(void) {
+    Dolphin* dolphin = furi_record_open(RECORD_DOLPHIN);
+    DolphinStats stats = dolphin_stats(dolphin);
+    if(stats.level_up_is_pending) dolphin_upgrade_level(dolphin);
+    furi_record_close(RECORD_DOLPHIN);
+}
+
 /* reaction to animation_manager->check_blocking_callback() */
 void animation_manager_check_blocking_process(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
+    if(!momentum_settings.desktop_anims) {
+        animation_manager_grant_pending_levelup();
+        return;
+    }
 
     if(animation_manager->state == AnimationManagerStateIdle) {
         bool blocked = animation_manager_check_blocking(animation_manager);
@@ -175,6 +189,7 @@ void animation_manager_check_blocking_process(AnimationManager* animation_manage
 /* reaction to animation_manager->new_idle_callback() */
 void animation_manager_new_idle_process(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
+    if(!momentum_settings.desktop_anims) return;
 
     if(animation_manager->state == AnimationManagerStateIdle) {
         animation_manager_start_new_idle(animation_manager);
@@ -184,6 +199,7 @@ void animation_manager_new_idle_process(AnimationManager* animation_manager) {
 /* reaction to animation_manager->interact_callback() */
 bool animation_manager_interact_process(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
+    if(!momentum_settings.desktop_anims) return false;
     bool consumed = true;
 
     if(animation_manager->levelup_pending) {
@@ -322,8 +338,10 @@ AnimationManager* animation_manager_alloc(void) {
     furi_record_close(RECORD_DOLPHIN);
 
     animation_manager->blocking_shown_sd_ok = true;
-    if(!animation_manager_check_blocking(animation_manager)) {
-        animation_manager_start_new_idle(animation_manager);
+    if(momentum_settings.desktop_anims) {
+        if(!animation_manager_check_blocking(animation_manager)) {
+            animation_manager_start_new_idle(animation_manager);
+        }
     }
 
     return animation_manager;
@@ -494,6 +512,7 @@ bool animation_manager_is_animation_loaded(AnimationManager* animation_manager) 
 
 void animation_manager_unload_and_stall_animation(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
+    if(!momentum_settings.desktop_anims) return;
     furi_assert(animation_manager->current_animation);
     furi_assert(!furi_string_size(animation_manager->freezed_animation_name));
     furi_assert(
@@ -531,6 +550,7 @@ void animation_manager_unload_and_stall_animation(AnimationManager* animation_ma
 
 void animation_manager_load_and_continue_animation(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
+    if(!momentum_settings.desktop_anims) return;
     furi_assert(!animation_manager->current_animation);
     furi_assert(furi_string_size(animation_manager->freezed_animation_name));
     furi_assert(
