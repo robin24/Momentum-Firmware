@@ -43,7 +43,11 @@
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_MUTEXES                       1
 #define configQUEUE_REGISTRY_SIZE               0
-#define configCHECK_FOR_STACK_OVERFLOW          0
+// Accessibility fork: method 2 compares the pattern at the end of the task's stack at every
+// switch, so an overflow crashes at once as "StackOverflow" naming the thread instead of
+// corrupting the heap silently (Momentum leaves it off; two of its services run within
+// 230 bytes of their limit)
+#define configCHECK_FOR_STACK_OVERFLOW          2
 #define configUSE_RECURSIVE_MUTEXES             1
 #define configUSE_COUNTING_SEMAPHORES           1
 #define configENABLE_BACKWARD_COMPATIBILITY     0
