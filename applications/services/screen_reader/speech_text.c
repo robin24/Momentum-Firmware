@@ -27,6 +27,8 @@
  * 12. A hyphen with a digit on at least one side: "to" as the only hyphen between two digit runs
  *    of the same length, a space between a digit run and two or more letters, "dash" otherwise.
  * 13. A token that is the single upper case letter A is "ay".
+ * 14. A slash between two digits is "of", as in the Passport's points: 18/100 is "eighteen of one
+ *    hundred". Any other slash is "slash".
  */
 #include "speech_text.h"
 
@@ -506,12 +508,12 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
             process_token(&o, in + start, i - start);
             continue;
         }
-        // Rules 9 and 11: between tokens
+        // Rules 9, 11 and 14: between tokens
         char c = in[i];
+        bool between_digits = i > 0 && i + 1 < n && is_digit(in[i - 1]) && is_digit(in[i + 1]);
         if(c == '.' || c == ',' || c == '?' || c == '!') {
             out_punct(&o, c);
         } else if(c == ':') {
-            bool between_digits = i > 0 && i + 1 < n && is_digit(in[i - 1]) && is_digit(in[i + 1]);
             if(between_digits) {
                 out_space(&o);
             } else {
@@ -522,7 +524,8 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
             // the start of the text or after a character that is not alphanumeric.
             out_word(&o, "minus");
         } else if(c == '/') {
-            out_word(&o, "slash");
+            // Rule 14
+            out_word(&o, between_digits ? "of" : "slash");
         } else if(c == '%') {
             out_word(&o, "percent");
         } else if(c == '&') {

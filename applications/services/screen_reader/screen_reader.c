@@ -8,6 +8,7 @@
 #include <gui/canvas_i.h>
 #include <input/input.h>
 #include <desktop/desktop.h>
+#include <dolphin/dolphin.h>
 #include <momentum/settings.h>
 
 #define TAG "ScreenReader"
@@ -17,12 +18,16 @@
 #define SR_FLAG_UNLOCKED   (1 << 2)
 #define SR_FLAG_LOCKED     (1 << 3)
 #define SR_FLAG_LOCKED_PIN (1 << 4)
+#define SR_FLAG_DOLPHIN    (1 << 5)
 #define SR_FLAG_LOCK_ANY   (SR_FLAG_UNLOCKED | SR_FLAG_LOCKED | SR_FLAG_LOCKED_PIN)
-#define SR_FLAG_ALL        (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_LOCK_ANY)
+#define SR_FLAG_ALL        (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_LOCK_ANY | SR_FLAG_DOLPHIN)
 #define SR_SETTLE_MS       50
 #define SR_MAX_LATENCY_MS  300
 #define SR_KEY_RECENT_MS   500
 #define SR_DESKTOP_KEY_MS  2000
+// A level up waits this long before it is said: the deed that brings it usually changes the
+// screen, and the new screen's announcement, which interrupts, is made first
+#define SR_LEVEL_HOLD_MS   1000
 
 // The lock screen's own words (desktop_view_locked.c, whose note writes the 3 as a digit to fit a
 // tap record), said when the desktop locks. Quickly: after 600 ms without a key it counts afresh
@@ -67,6 +72,14 @@ struct ScreenReader {
     FuriPubSubSubscription* desktop_subscription;
     bool lock_said;
     uint32_t lock_said_tick;
+
+    // The dolphin, for its level and mood; null until its record exists (sr_subscribe_dolphin).
+    // Its pubsub callback only sets a flag; the service thread alone asks for the stats and keeps
+    // the level last seen, and a level up held until its time comes (0: none)
+    Dolphin* dolphin;
+    uint8_t last_level;
+    uint8_t held_level;
+    uint32_t held_level_due;
 
     // Same-screen changes said at most once per change delay, the latest held until its time
     // comes; the service thread alone uses it
@@ -207,6 +220,26 @@ static void sr_subscribe_desktop(ScreenReader* sr) {
         desktop_api_get_status_pubsub(desktop), sr_desktop_status_callback, sr);
 }
 
+// Dolphin thread, after a deed or a level up. Only a flag, as for the desktop: dolphin_stats waits
+// for the dolphin's own event loop, the thread running this callback, so the service thread reads
+// the stats instead
+static void sr_dolphin_callback(const void* message, void* context) {
+    UNUSED(message);
+    ScreenReader* sr = context;
+    furi_thread_flags_set(sr->thread_id, SR_FLAG_DOLPHIN);
+}
+
+// The dolphin service creates its record first thing when it starts, but in a special boot (an
+// update) it never starts. So, as for the desktop, the service loop tries again on every frame
+// until the record is there, and the reader keeps reading the update's screens meanwhile. Then it
+// subscribes and reads the level once: subscribed first, so every level up after the read is seen
+static void sr_subscribe_dolphin(ScreenReader* sr) {
+    if(sr->dolphin || !furi_record_exists(RECORD_DOLPHIN)) return;
+    sr->dolphin = furi_record_open(RECORD_DOLPHIN);
+    furi_pubsub_subscribe(dolphin_get_pubsub(sr->dolphin), sr_dolphin_callback, sr);
+    sr->last_level = dolphin_stats(sr->dolphin).level;
+}
+
 // Every announcement that is said goes through here, with the mutex held: counted, said while
 // the reader is on (at the volume as saved), and mirrored to the console. It interrupts what is
 // being said when it asks to; a change on the same screen waits its turn instead and replaces a
@@ -244,25 +277,67 @@ static bool sr_quiet(
     return (unasked && since_press >= SR_DESKTOP_KEY_MS) || after_lock;
 }
 
-// The desktop locked or unlocked, on the service thread, at once: a frame still settling is
-// modelled after it. Never kept quiet like the desktop's own changes: an auto lock comes without
-// a key press. A lock interrupts what is being said. "Unlocked" waits for it instead (the key
-// that unlocked has silenced speech already), and the "Home screen" that follows, when the lock
-// screen's text goes away, is queued behind it. A held change is dropped
-static void sr_say_lock(ScreenReader* sr, const char* text, bool locked) {
+// The service's own announcements, on the service thread: the desktop locking or unlocking, said
+// at once (a frame still settling is modelled after it), and the dolphin's level up, once its
+// time comes (sr_say_held_level). Never kept quiet like the desktop's own changes: an auto lock
+// and a level up come without a key press. A lock interrupts what is being said and starts the
+// desktop's quiet window (sr_quiet). "Unlocked" and a level up wait for what is being said
+// instead (the key that unlocked has silenced speech already); the "Home screen" that follows an
+// unlock, when the lock screen's text goes away, is queued behind it. A held change is dropped
+static void sr_say_event(ScreenReader* sr, SrAnnKind kind, const char* text, bool interrupt) {
     if(!momentum_settings.screen_reader) return;
     sr_lock(sr);
     SrAnnouncement* a = &sr->announcements[0];
-    a->kind = SrAnnLock;
-    a->interrupt = locked;
+    a->kind = kind;
+    a->interrupt = interrupt;
     strlcpy(a->text, text, sizeof(a->text));
-    if(locked) {
+    if(kind == SrAnnLock && interrupt) {
         sr->lock_said = true;
         sr->lock_said_tick = furi_get_tick();
     }
     sr_throttle_clear(&sr->throttle);
     sr_announce(sr, a);
     sr_unlock(sr);
+}
+
+// After a deed or a level up, on the service thread, which may wait briefly for the dolphin. A
+// level above the last one seen is a level up: held for SR_LEVEL_HOLD_MS, then said as "Level up,
+// level 4"; a second rise meanwhile only updates the level to be said. The level set by hand in
+// Momentum, Misc, Dolphin shows at the next deed: a lower one is only noted, a higher one is said
+// like a level up. Noted with the reader off too, so turning it on says nothing stale
+static void sr_check_level(ScreenReader* sr) {
+    DolphinStats stats = dolphin_stats(sr->dolphin);
+    if(stats.level > sr->last_level) {
+        if(!sr->held_level) sr->held_level_due = furi_get_tick() + SR_LEVEL_HOLD_MS;
+        sr->held_level = stats.level;
+    }
+    sr->last_level = stats.level;
+}
+
+// Milliseconds until the held level up is due, 0 when it is due already
+static uint32_t sr_held_level_wait_ms(const ScreenReader* sr, uint32_t now) {
+    int32_t left = (int32_t)(sr->held_level_due - now);
+    return left > 0 ? (uint32_t)left : 0;
+}
+
+// A held level up whose time has come, on the service thread, once no frame is settling, so it
+// is queued after the announcement of the screen the deed brought, without interrupting. With
+// the reader off by then it is dropped; the level stays noted
+static void sr_say_held_level(ScreenReader* sr) {
+    if(!sr->held_level || sr_held_level_wait_ms(sr, furi_get_tick()) > 0) return;
+    char text[24];
+    snprintf(text, sizeof(text), "Level up, level %u", (unsigned)sr->held_level);
+    sr->held_level = 0;
+    sr_say_event(sr, SrAnnLevel, text, false);
+}
+
+// The Passport's words for the dolphin's mood, from its thresholds
+// (applications/settings/dolphin_passport/passport.c:41-49). The Passport is an app of its own on
+// the card, so the thresholds live in both places on purpose
+static const char* sr_mood(uint32_t butthurt) {
+    if(butthurt <= 4) return "happy";
+    if(butthurt <= 9) return "okay";
+    return "angry";
 }
 
 // Runs the model under the mutex (well under a millisecond) so that the console
@@ -353,11 +428,26 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
         }
         speech_say_parts(sr->speech, text);
         break;
-    case SrChordStatus:
-        sr_status_text(screen, text, SR_DESCRIBE_TEXT_MAX);
-        if(text[0] == '\0') strlcpy(text, "No status bar", SR_DESCRIBE_TEXT_MAX);
+    case SrChordStatus: {
+        // The status bar, then the dolphin: "battery 87 percent, level 3, mood happy"; on a
+        // screen without a status bar just the dolphin. The dolphin may keep this thread briefly.
+        // Without a dolphin (a special boot) the status bar alone, or "No status bar"
+        size_t n = sr_status_text(screen, text, SR_DESCRIBE_TEXT_MAX);
+        if(sr->dolphin) {
+            DolphinStats stats = dolphin_stats(sr->dolphin);
+            snprintf(
+                text + n,
+                SR_DESCRIBE_TEXT_MAX - n,
+                "%slevel %u, mood %s",
+                n ? ", " : "",
+                (unsigned)stats.level,
+                sr_mood(stats.butthurt));
+        } else if(n == 0) {
+            strlcpy(text, "No status bar", SR_DESCRIBE_TEXT_MAX);
+        }
         speech_say_parts(sr->speech, text);
         break;
+    }
     case SrChordRepeat:
         sr_focus_with_position(screen, text, SR_DESCRIBE_TEXT_MAX);
         if(text[0] == '\0') strlcpy(text, "No focus", SR_DESCRIBE_TEXT_MAX);
@@ -471,6 +561,7 @@ int32_t screen_reader_srv(void* p) {
     sr->gui = furi_record_open(RECORD_GUI);
     gui_tap_set(sr->gui, &screen_reader_tap, sr);
     sr_subscribe_desktop(sr);
+    sr_subscribe_dolphin(sr);
 
     furi_record_create(RECORD_SCREEN_READER, sr);
     screen_reader_cli_register(sr);
@@ -483,11 +574,17 @@ int32_t screen_reader_srv(void* p) {
         if(pending) {
             uint32_t waited = furi_get_tick() - pending_since;
             timeout = waited >= SR_MAX_LATENCY_MS ? 0 : SR_SETTLE_MS;
-        } else if(sr->throttle.pending) {
-            // A held change wakes the loop when its time comes, at once when it is due already;
-            // while a frame settles, it waits for the frame to be modelled
-            timeout = sr_throttle_wait_ms(
-                &sr->throttle, furi_get_tick(), momentum_settings.sr_change_ms);
+        } else {
+            // A held change and a held level up wake the loop when their time comes, at once
+            // when it is due already; while a frame settles, they wait for it to be modelled
+            uint32_t now = furi_get_tick();
+            if(sr->throttle.pending) {
+                timeout = sr_throttle_wait_ms(&sr->throttle, now, momentum_settings.sr_change_ms);
+            }
+            if(sr->held_level) {
+                uint32_t wait = sr_held_level_wait_ms(sr, now);
+                if(wait < timeout) timeout = wait;
+            }
         }
         uint32_t flags = furi_thread_flags_wait(SR_FLAG_ALL, FuriFlagWaitAny, timeout);
         // A key press drops a held change before the frame the key causes is modelled
@@ -495,18 +592,20 @@ int32_t screen_reader_srv(void* p) {
             sr_throttle_clear(&sr->throttle);
         }
         if(flags & FuriFlagError) {
-            // Timeout: the screen has settled, or waited long enough; or a held change is due
+            // Timeout: the screen has settled, or waited long enough; or a held change or level
+            // up is due
             if(pending) {
                 pending = false;
                 sr_process(sr);
             }
             sr_say_held_change(sr);
+            sr_say_held_level(sr);
             continue;
         }
         // A lock before an unlock, should both arrive at once
-        if(flags & SR_FLAG_LOCKED_PIN) sr_say_lock(sr, SR_LOCKED_PIN_TEXT, true);
-        if(flags & SR_FLAG_LOCKED) sr_say_lock(sr, SR_LOCKED_TEXT, true);
-        if(flags & SR_FLAG_UNLOCKED) sr_say_lock(sr, "Unlocked", false);
+        if(flags & SR_FLAG_LOCKED_PIN) sr_say_event(sr, SrAnnLock, SR_LOCKED_PIN_TEXT, true);
+        if(flags & SR_FLAG_LOCKED) sr_say_event(sr, SrAnnLock, SR_LOCKED_TEXT, true);
+        if(flags & SR_FLAG_UNLOCKED) sr_say_event(sr, SrAnnLock, "Unlocked", false);
         if(flags & SR_FLAG_COMMAND) {
             // A command reads the screen as it is now: a frame still settling is modelled first,
             // as the timeout would have done. With the reader turned off meanwhile it is dropped
@@ -519,10 +618,16 @@ int32_t screen_reader_srv(void* p) {
             }
         } else if(flags & SR_FLAG_FRAME) {
             sr_subscribe_desktop(sr);
+            sr_subscribe_dolphin(sr);
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }
-        if(!pending) sr_say_held_change(sr);
+        // A level up is held here and said when its time comes
+        if(flags & SR_FLAG_DOLPHIN) sr_check_level(sr);
+        if(!pending) {
+            sr_say_held_change(sr);
+            sr_say_held_level(sr);
+        }
     }
     return 0;
 }

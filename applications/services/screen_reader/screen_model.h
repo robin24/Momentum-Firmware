@@ -105,6 +105,7 @@ typedef enum {
                     layer; not interrupting when the desktop's own text went away (one of its
                     screens closed, or a bubble vanished) */
     SrAnnLock, /**< the desktop locked or unlocked; the service's, never the model's */
+    SrAnnLevel, /**< the dolphin went up a level; the service's, never the model's */
 } SrAnnKind;
 
 typedef struct {

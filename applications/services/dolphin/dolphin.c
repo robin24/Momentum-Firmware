@@ -264,6 +264,9 @@ static void dolphin_process_event(FuriEventLoopObject* object, void* context) {
 
     } else if(event.type == DolphinEventTypeLevel) {
         dolphin_state_increase_level(dolphin->state);
+        // Published as after a deed, so the screen reader hears of the new level
+        DolphinPubsubEvent event = DolphinPubsubEventUpdate;
+        furi_pubsub_publish(dolphin->pubsub, &event);
         furi_event_loop_timer_start(dolphin->flush_timer, FLUSH_TIMEOUT_TICKS);
 
     } else if(event.type == DolphinEventTypeReloadState) {

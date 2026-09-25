@@ -72,6 +72,8 @@ static const char* sr_kind_name(SrAnnKind kind) {
         return "home";
     case SrAnnLock:
         return "lock";
+    case SrAnnLevel:
+        return "level";
     default:
         return "?";
     }
