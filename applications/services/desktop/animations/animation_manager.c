@@ -57,6 +57,8 @@ struct AnimationManager {
     bool blocking_shown_sd_ok  : 1;
     bool levelup_pending       : 1;
     bool levelup_active        : 1;
+    /* momentum_settings.desktop_anims as read at alloc: the setting applies at the next boot */
+    bool anims_enabled;
 };
 
 static StorageAnimation*
@@ -149,8 +151,8 @@ static void animation_manager_interact_callback(void* context) {
     }
 }
 
-// Animations off (momentum_settings.desktop_anims false): nothing is ever loaded, so the
-// "new mail" animation that grants a pending level up on a key press never shows; the level
+// Animations off (anims_enabled false, the setting as read at alloc): nothing is ever loaded, so
+// the "new mail" animation that grants a pending level up on a key press never shows; the level
 // is granted here instead, whenever the manager is asked to look at the dolphin's state
 static void animation_manager_grant_pending_levelup(void) {
     Dolphin* dolphin = furi_record_open(RECORD_DOLPHIN);
@@ -162,7 +164,7 @@ static void animation_manager_grant_pending_levelup(void) {
 /* reaction to animation_manager->check_blocking_callback() */
 void animation_manager_check_blocking_process(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
-    if(!momentum_settings.desktop_anims) {
+    if(!animation_manager->anims_enabled) {
         animation_manager_grant_pending_levelup();
         return;
     }
@@ -189,7 +191,7 @@ void animation_manager_check_blocking_process(AnimationManager* animation_manage
 /* reaction to animation_manager->new_idle_callback() */
 void animation_manager_new_idle_process(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
-    if(!momentum_settings.desktop_anims) return;
+    if(!animation_manager->anims_enabled) return;
 
     if(animation_manager->state == AnimationManagerStateIdle) {
         animation_manager_start_new_idle(animation_manager);
@@ -199,7 +201,7 @@ void animation_manager_new_idle_process(AnimationManager* animation_manager) {
 /* reaction to animation_manager->interact_callback() */
 bool animation_manager_interact_process(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
-    if(!momentum_settings.desktop_anims) return false;
+    if(!animation_manager->anims_enabled) return false;
     bool consumed = true;
 
     if(animation_manager->levelup_pending) {
@@ -316,6 +318,7 @@ static void animation_manager_replace_current_animation(
 
 AnimationManager* animation_manager_alloc(void) {
     AnimationManager* animation_manager = malloc(sizeof(AnimationManager));
+    animation_manager->anims_enabled = momentum_settings.desktop_anims;
     animation_manager->animation_view = bubble_animation_view_alloc();
     animation_manager->view_stack = view_stack_alloc();
     View* animation_view = bubble_animation_get_view(animation_manager->animation_view);
@@ -338,7 +341,7 @@ AnimationManager* animation_manager_alloc(void) {
     furi_record_close(RECORD_DOLPHIN);
 
     animation_manager->blocking_shown_sd_ok = true;
-    if(momentum_settings.desktop_anims) {
+    if(animation_manager->anims_enabled) {
         if(!animation_manager_check_blocking(animation_manager)) {
             animation_manager_start_new_idle(animation_manager);
         }
@@ -512,7 +515,7 @@ bool animation_manager_is_animation_loaded(AnimationManager* animation_manager) 
 
 void animation_manager_unload_and_stall_animation(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
-    if(!momentum_settings.desktop_anims) return;
+    if(!animation_manager->anims_enabled) return;
     furi_assert(animation_manager->current_animation);
     furi_assert(!furi_string_size(animation_manager->freezed_animation_name));
     furi_assert(
@@ -550,7 +553,7 @@ void animation_manager_unload_and_stall_animation(AnimationManager* animation_ma
 
 void animation_manager_load_and_continue_animation(AnimationManager* animation_manager) {
     furi_assert(animation_manager);
-    if(!momentum_settings.desktop_anims) return;
+    if(!animation_manager->anims_enabled) return;
     furi_assert(!animation_manager->current_animation);
     furi_assert(furi_string_size(animation_manager->freezed_animation_name));
     furi_assert(
