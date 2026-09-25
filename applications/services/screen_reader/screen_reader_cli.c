@@ -98,8 +98,9 @@ static void sr_cli_usage(void) {
     printf(
         "  voice on|off|status  recorded word clips from the card; off mutes speech until on or a reboot\r\n");
     printf(
-        "  chord up|down|ok|okhold|left|right  what Back plus that key does: screen, status bar,\r\n"
-        "               focus, focus spelled, volume down, volume up\r\n");
+        "  chord up|down|ok|okhold|downhold|left|right  what Back plus that key does: screen,\r\n"
+        "               status bar, focus, focus spelled, reader off or on (also while it is off),\r\n"
+        "               volume down, volume up\r\n");
 }
 
 static void sr_cli_screen(ScreenReader* sr) {
@@ -288,23 +289,23 @@ static void sr_cli_chord(ScreenReader* sr, FuriString* args) {
         {"down", SrChordStatus, "read the status bar"},
         {"ok", SrChordRepeat, "repeat the focus"},
         {"okhold", SrChordSpell, "spell the focus"},
+        {"downhold", SrChordToggleReader, "turn the reader off or on"},
         {"left", SrChordVolumeDown, "volume down"},
         {"right", SrChordVolumeUp, "volume up"},
     };
-    if(!screen_reader_is_enabled(sr)) {
-        printf("screen reader is off\r\n");
-        return;
-    }
     FuriString* key = furi_string_alloc();
     bool has = args_read_string_and_trim(args, key);
     size_t i = 0;
     while(i < COUNT_OF(chords) && !(has && furi_string_cmp_str(key, chords[i].key) == 0))
         i++;
-    if(i < COUNT_OF(chords)) {
+    if(i == COUNT_OF(chords)) {
+        printf("sr chord up|down|ok|okhold|downhold|left|right\r\n");
+    } else if(chords[i].command != SrChordToggleReader && !screen_reader_is_enabled(sr)) {
+        // As on the device: with the reader off the other chords are plain keys
+        printf("screen reader is off\r\n");
+    } else {
         screen_reader_run_command(sr, chords[i].command);
         printf("back + %s: %s\r\n", chords[i].key, chords[i].does);
-    } else {
-        printf("sr chord up|down|ok|okhold|left|right\r\n");
     }
     furi_string_free(key);
 }

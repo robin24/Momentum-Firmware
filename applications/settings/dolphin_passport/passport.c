@@ -89,6 +89,18 @@ static void render_callback(Canvas* canvas, void* _ctx) {
     }
     canvas_set_font(canvas, FontBatteryPercent);
     canvas_draw_str(canvas, 59, 42, xp_str);
+    if(stats->level != DOLPHIN_LEVEL_COUNT + 1) {
+        // Not drawn: the screen reader reads, after the points, the level they lead to, the next
+        // one, or the last one while OK shows the total
+        char note[16];
+        snprintf(
+            note,
+            sizeof(note),
+            "to level %u",
+            (unsigned)(ctx->progress_total ? DOLPHIN_LEVEL_COUNT + 1 : stats->level + 1u));
+        canvas_tap_hint_note_at(
+            canvas, (uint8_t)(59 + canvas_string_width(canvas, xp_str) + 2), 42, note);
+    }
     canvas_set_font(canvas, FontSecondary);
 
     canvas_set_color(canvas, ColorWhite);

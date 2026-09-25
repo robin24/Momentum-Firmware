@@ -78,8 +78,10 @@ struct ScreenReader {
     uint8_t pending_command;
 
     // The desktop's lock state, for "Locked" and "Unlocked"; subscribed once the desktop record
-    // exists. The service thread alone keeps the time of the last lock announcement
+    // exists. The service thread alone keeps the time of the last lock announcement.
+    // desktop_locked follows the desktop's messages, with the reader off too, for the toggle
     FuriPubSubSubscription* desktop_subscription;
+    bool desktop_locked;
     bool lock_said;
     uint32_t lock_said_tick;
 
@@ -187,18 +189,21 @@ void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
 
 // Input filter: runs on the input service, timer service or a console thread, serialized by
 // the input filter lock. It must not block, call input_set_filter or publish input events.
-// Installed once at start and read like the text tap reads the setting: while the reader is off,
-// whoever turned it off (the console, or the settings app writing the setting directly), every
-// event passes and the chord state stays fresh for when it comes back on
+// Installed once at start and fed every event with the setting as it is now, read like the text
+// tap reads it: while the reader is off, whoever turned it off (the chord, the console, or the
+// settings app writing the setting directly), Back and Down held long is the only chord, and it
+// turns the reader on again; every other key passes as an ordinary key (sr_chords.h)
 static void sr_input_filter(const InputEvent* event, InputFilterResult* result, void* context) {
     ScreenReader* sr = context;
-    if(!momentum_settings.screen_reader) {
-        sr_chords_init(&sr->chords);
-        return;
-    }
     bool drop = false, emit_long = false;
-    SrChordCommand command =
-        sr_chords_feed(&sr->chords, event->key, event->type, furi_get_tick(), &drop, &emit_long);
+    SrChordCommand command = sr_chords_feed(
+        &sr->chords,
+        momentum_settings.screen_reader,
+        event->key,
+        event->type,
+        furi_get_tick(),
+        &drop,
+        &emit_long);
     result->drop = drop;
     result->emit_long = emit_long;
     if(command != SrChordNone) screen_reader_run_command(sr, command);
@@ -218,6 +223,7 @@ static void sr_push_volume(ScreenReader* sr) {
 static void sr_desktop_status_callback(const void* message, void* context) {
     const DesktopStatus* status = message;
     ScreenReader* sr = context;
+    __atomic_store_n(&sr->desktop_locked, status->locked, __ATOMIC_SEQ_CST);
     uint32_t flag = SR_FLAG_UNLOCKED;
     if(status->locked) {
         flag = furi_hal_rtc_is_flag_set(FuriHalRtcFlagLock) ? SR_FLAG_LOCKED_PIN : SR_FLAG_LOCKED;
@@ -232,6 +238,9 @@ static void sr_subscribe_desktop(ScreenReader* sr) {
     Desktop* desktop = furi_record_open(RECORD_DESKTOP);
     sr->desktop_subscription = furi_pubsub_subscribe(
         desktop_api_get_status_pubsub(desktop), sr_desktop_status_callback, sr);
+    // A lock published before this subscription is a PIN lock at boot, which the RTC flag tells
+    if(desktop_api_is_locked(desktop))
+        __atomic_store_n(&sr->desktop_locked, true, __ATOMIC_SEQ_CST);
 }
 
 // Dolphin thread, after a deed or a level up. Only a flag, as for the desktop: dolphin_stats waits
@@ -461,6 +470,18 @@ static void sr_say_held_change(ScreenReader* sr) {
     sr_unlock(sr);
 }
 
+// What Back and Up reads: the screen described, or where it draws no text of its own, "Home
+// screen" on the desktop, as the model announces it, and "Nothing on screen" elsewhere
+static void sr_read_all_text(const SrScreen* screen, char* text, size_t size) {
+    sr_screen_describe(screen, text, size);
+    if(text[0] == '\0') {
+        strlcpy(
+            text,
+            screen->content_layer == SrLayerDesktop ? "Home screen" : "Nothing on screen",
+            size);
+    }
+}
+
 // A chord's command, on the service thread. Every command interrupts what is being said; the
 // texts that can outgrow a speech item (the whole screen, the status bar, the focus) are said
 // in parts. The screen is read in place: only this thread writes model.prev (sr_process), and a
@@ -471,14 +492,7 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
     sr_push_volume(sr);
     switch(command) {
     case SrChordReadAll:
-        sr_screen_describe(screen, text, SR_DESCRIBE_TEXT_MAX);
-        if(text[0] == '\0') {
-            // The home screen draws no text of its own; the model announces it the same way
-            strlcpy(
-                text,
-                screen->content_layer == SrLayerDesktop ? "Home screen" : "Nothing on screen",
-                SR_DESCRIBE_TEXT_MAX);
-        }
+        sr_read_all_text(screen, text, SR_DESCRIBE_TEXT_MAX);
         speech_say_parts(sr->speech, text);
         break;
     case SrChordStatus: {
@@ -530,6 +544,68 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
     default:
         break;
     }
+    free(text);
+}
+
+// The screen as it is when the chord turned the reader on, on the service thread. It asks for a
+// frame, which the tap captures now that the setting is on, and waits for it and for the frames
+// that follow within SR_SETTLE_MS, at most SR_MAX_LATENCY_MS in all, as the loop lets a screen
+// settle. The last one is modelled without its announcements: the tap made it a new screen
+// (sr_frame_begin), which would be read again and cut the confirmation off. Now it is the screen
+// announced, and its next frame brings no news. False when no frame came in time
+static bool sr_model_screen_quietly(ScreenReader* sr) {
+    furi_thread_flags_clear(SR_FLAG_FRAME);
+    gui_update(sr->gui);
+    uint32_t start = furi_get_tick();
+    uint32_t wait = SR_MAX_LATENCY_MS;
+    while(!(furi_thread_flags_wait(SR_FLAG_FRAME, FuriFlagWaitAny, wait) & FuriFlagError) &&
+          furi_get_tick() - start < SR_MAX_LATENCY_MS) {
+        wait = SR_SETTLE_MS;
+    }
+    sr_lock(sr);
+    bool modelled = sr->ready_valid;
+    if(modelled) {
+        memcpy(&sr->working, &sr->ready, sizeof(SrFrame));
+        sr->ready_valid = false;
+        sr_model_process(
+            &sr->model,
+            &sr->working,
+            furi_get_tick(),
+            false,
+            sr->announcements,
+            SR_MAX_ANNOUNCEMENTS);
+        sr->stats.frames++;
+    }
+    sr_unlock(sr);
+    return modelled;
+}
+
+// Back and Down held long, or sr chord downhold, on the service thread, with the reader on or off;
+// ignored while the desktop is locked, where Back is the lock screen's own key. Off: the reader
+// goes off as sr off turns it off, then "Screen reader off" is said by the engine itself, as sr
+// say is. On: the setting saved, the screen modelled quietly, then one utterance in parts, "Screen
+// reader on. " first and the screen as Back and Up reads it right after; "Screen reader on" alone
+// when no frame came. A change held from before either would be read after it, from a screen
+// long gone
+static void sr_toggle(ScreenReader* sr) {
+    if(__atomic_load_n(&sr->desktop_locked, __ATOMIC_SEQ_CST)) return;
+    sr_throttle_clear(&sr->throttle);
+    if(momentum_settings.screen_reader) {
+        screen_reader_set_enabled(sr, false);
+        sr_push_volume(sr);
+        speech_say(sr->speech, "Screen reader off", true, false);
+        return;
+    }
+    momentum_settings.screen_reader = true;
+    momentum_settings_save();
+    char* text = malloc(SR_DESCRIBE_TEXT_MAX);
+    size_t n = strlcpy(text, "Screen reader on. ", SR_DESCRIBE_TEXT_MAX);
+    if(sr_model_screen_quietly(sr)) {
+        sr_read_all_text(&sr->model.prev, text + n, SR_DESCRIBE_TEXT_MAX - n);
+    }
+    if(text[n] == '\0') strlcpy(text, "Screen reader on", SR_DESCRIBE_TEXT_MAX);
+    sr_push_volume(sr);
+    speech_say_parts(sr->speech, text);
     free(text);
 }
 
@@ -667,12 +743,15 @@ int32_t screen_reader_srv(void* p) {
         if(flags & SR_FLAG_UNLOCKED) sr_say_event(sr, SrAnnLock, "Unlocked", false);
         if(flags & SR_FLAG_COMMAND) {
             // A command reads the screen as it is now: a frame still settling is modelled first,
-            // as the timeout would have done. With the reader turned off meanwhile it is dropped
+            // as the timeout would have done. With the reader turned off meanwhile it is dropped;
+            // the toggle alone runs either way, since it turns the reader on as well as off
             pending = false;
             sr_process(sr);
             SrChordCommand command = (SrChordCommand)__atomic_exchange_n(
                 &sr->pending_command, (uint8_t)SrChordNone, __ATOMIC_SEQ_CST);
-            if(command != SrChordNone && momentum_settings.screen_reader) {
+            if(command == SrChordToggleReader) {
+                sr_toggle(sr);
+            } else if(command != SrChordNone && momentum_settings.screen_reader) {
                 sr_run_command(sr, command);
             }
         } else if(flags & SR_FLAG_FRAME) {

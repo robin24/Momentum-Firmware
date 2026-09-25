@@ -1,5 +1,5 @@
 entry,status,name,type,params
-Version,+,87.2,,
+Version,+,87.3,,
 Header,+,applications/drivers/subghz/cc1101_ext/cc1101_ext_interconnect.h,,
 Header,+,applications/main/archive/helpers/archive_helpers_ext.h,,
 Header,+,applications/services/applications.h,,
@@ -883,6 +883,7 @@ Function,+,canvas_set_font,void,"Canvas*, Font"
 Function,+,canvas_set_font_direction,void,"Canvas*, CanvasDirection"
 Function,+,canvas_string_width,uint16_t,"Canvas*, const char*"
 Function,+,canvas_tap_hint_note,void,"Canvas*, const char*, _Bool"
+Function,+,canvas_tap_hint_note_at,void,"Canvas*, uint8_t, uint8_t, const char*"
 Function,+,canvas_width,size_t,const Canvas*
 Function,-,cbrt,double,double
 Function,-,cbrtf,float,float

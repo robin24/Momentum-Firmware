@@ -49,6 +49,12 @@ static bool sr_record_is_status(const SrRecord* r) {
     return r->layer == SrLayerStatusLeft || r->layer == SrLayerStatusRight;
 }
 
+/** A note without a place (canvas_tap_hint_note, at x 0, y 0): read first, a row of its own. A
+ *  note with one (canvas_tap_hint_note_at) is read where it sits, as drawn text is. */
+static bool sr_record_is_plain_note(const SrRecord* r) {
+    return r->note && r->x == 0 && r->y == 0;
+}
+
 static bool sr_record_is_button(const SrRecord* r) {
     if(sr_record_is_status(r)) return false;
     if(r->button != 0) return true;
@@ -81,9 +87,9 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
     screen->content_layer = frame->content_layer;
     screen->overflow = frame->overflow;
 
-    // Reading order: notes first (they have no position, and drawn text may pass above the top
-    // edge, as the lock screen's sliding cover does), then by baseline, then by x. Insertion sort
-    // on indices.
+    // Reading order: plain notes first (they have no position, and drawn text may pass above the
+    // top edge, as the lock screen's sliding cover does), then by baseline, then by x, a note
+    // with a place among the drawn text. Insertion sort on indices.
     uint8_t order[SR_MAX_RECORDS];
     uint8_t n = frame->count > SR_MAX_RECORDS ? SR_MAX_RECORDS : frame->count;
     for(uint8_t i = 0; i < n; i++) {
@@ -91,7 +97,9 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         while(j > 0) {
             const SrRecord* a = &frame->records[order[j - 1]];
             const SrRecord* b = &frame->records[i];
-            bool after = a->note != b->note ? b->note :
+            bool a_plain = sr_record_is_plain_note(a);
+            bool b_plain = sr_record_is_plain_note(b);
+            bool after = a_plain != b_plain ? b_plain :
                                               (a->y > b->y) || (a->y == b->y && a->x > b->x);
             if(!after) break;
             order[j] = order[j - 1];
@@ -109,6 +117,7 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
     }
 
     SrRow* row = NULL;
+    bool row_plain_note = false; // the current row is a plain note's
     for(uint8_t k = 0; k < n; k++) {
         const SrRecord* r = &frame->records[order[k]];
         char text[SR_TEXT_MAX];
@@ -122,10 +131,13 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         // A record only joins the row above it when it reads the same way. On the on screen
         // keyboard every key of a row shares one baseline, so the selected key is its own row.
         // Buttons and status items never join: the clock and the battery percentage sit a
-        // pixel apart on the status bar and are read as two items. Notes never join either:
-        // they sit at y 0, where drawn text only passes by (the lock screen's sliding cover).
+        // pixel apart on the status bar and are read as two items. Plain notes never join
+        // either: they sit at y 0, where drawn text only passes by (the lock screen's sliding
+        // cover). A note with a place joins its baseline's row as drawn text does; the model
+        // has no gap rule, so it needs no width, and its x only orders it among the row's text.
         SrRowKind kind = sr_record_row_kind(status, button, focus);
-        bool same_row = row && !r->note && !row->note && kind != SrRowButton &&
+        bool plain_note = sr_record_is_plain_note(r);
+        bool same_row = row && !plain_note && !row_plain_note && kind != SrRowButton &&
                         kind != SrRowStatus && row->kind == kind &&
                         (r->y - row->y) <= SR_ROW_Y_TOLERANCE &&
                         (row->y - r->y) <= SR_ROW_Y_TOLERANCE;
@@ -139,9 +151,10 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             row->x = r->x;
             row->y = r->y;
             row->font = r->font;
-            row->note = r->note;
+            row->note = r->note; // a row a note begins is never the title
             row->kind = kind;
             row->button = r->button;
+            row_plain_note = plain_note;
         }
         if(row->text[0] != '\0') sr_append(row->text, sizeof(row->text), " ");
         sr_append(row->text, sizeof(row->text), text);

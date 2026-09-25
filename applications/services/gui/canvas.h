@@ -490,13 +490,30 @@ void canvas_draw_rbox(
  * reader describes. A note has no position and is never the screen's title, which is read first.
  * A plain note is read after the title and before the screen's other rows; with focus true the
  * note is the focused item (for example the name of the selected icon button) and is read where
- * the focus is read. Does nothing while no screen reader listens.
+ * the focus is read. Does nothing while no screen reader listens. To place words among the
+ * drawn text, see canvas_tap_hint_note_at.
  *
  * @param      canvas  Canvas instance
  * @param      text    the words, copied at once (up to 47 characters are kept)
  * @param      focus   true when the text names the focused item
  */
 void canvas_tap_hint_note(Canvas* canvas, const char* text, bool focus);
+
+/** Tell the screen reader words that belong at a place on the screen, as if drawn there.
+ *
+ * Nothing is drawn. Call it from a draw callback. The same note as canvas_tap_hint_note's, in
+ * the secondary font and never the screen's title nor its focus, but placed: x and y are the
+ * start and the baseline of the text as for canvas_draw_str, and the reader reads it in its place
+ * among the drawn strings, joined to the row on that baseline after the text drawn to its left.
+ * A note placed at the screen's x 0, y 0 is a plain note. Does nothing while no screen reader
+ * listens.
+ *
+ * @param      canvas  Canvas instance
+ * @param      x       x of the text's start
+ * @param      y       y of the text's baseline
+ * @param      text    the words, copied at once (up to 47 characters are kept)
+ */
+void canvas_tap_hint_note_at(Canvas* canvas, uint8_t x, uint8_t y, const char* text);
 
 #ifdef __cplusplus
 }

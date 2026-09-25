@@ -47,7 +47,8 @@ typedef struct {
     uint8_t font; /**< Font, or CANVAS_TAP_FONT_CUSTOM */
     bool inverted; /**< logical colour was ColorWhite, i.e. text on a filled box */
     bool focus; /**< a focus hint applied to this string */
-    bool note; /**< not drawn: canvas_tap_hint_note's words for icons, at x 0, y 0 */
+    bool note; /**< not drawn: a note's words, at x 0, y 0 from canvas_tap_hint_note, at their
+                    place from canvas_tap_hint_note_at */
     uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
     uint16_t index; /**< 1-based position from the focus hint, 0 if unknown */
     uint16_t count; /**< item count from the focus hint, 0 if unknown */

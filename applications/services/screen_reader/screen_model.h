@@ -50,7 +50,8 @@ typedef struct {
     uint8_t font;
     bool inverted; /**< drawn in white, i.e. on a filled box */
     bool focus; /**< a module marked this string as the focused item */
-    bool note; /**< not drawn: a view's words for what it shows as icons, at x 0, y 0 */
+    bool note; /**< not drawn: a view's words for what it shows as icons. At x 0, y 0 a plain
+                    note, read first as a row of its own; elsewhere placed as drawn text is */
     uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
     uint16_t index; /**< 1-based position from the module, 0 if unknown */
     uint16_t count; /**< item count from the module, 0 if unknown */
@@ -72,13 +73,14 @@ typedef enum {
     SrRowStatus,
 } SrRowKind;
 
-/** Strings on one baseline, joined in reading order. A note is a row of its own. */
+/** Strings on one baseline, joined in reading order. A plain note is a row of its own; a note
+ *  with a place joins its baseline's row as drawn text does. */
 typedef struct {
     char text[SR_ROW_TEXT_MAX];
     int16_t x;
     int16_t y;
     uint8_t font;
-    bool note; /**< the row is a note, never the title */
+    bool note; /**< a note begins the row, which is never the title */
     SrRowKind kind;
     uint8_t button; /**< button side hint of the first record, 0 if none */
     uint16_t index;
@@ -124,8 +126,8 @@ typedef struct {
 /** Trim, collapse spaces, drop the text cursor bar and non printable bytes. */
 void sr_normalize(const char* in, char* out, size_t out_size);
 
-/** Turn a frame into rows, focus, title, buttons. Rows are in reading order: notes first, then
- *  by baseline and x. */
+/** Turn a frame into rows, focus, title, buttons. Rows are in reading order: plain notes first,
+ *  then by baseline and x, notes with a place among the drawn text. */
 void sr_screen_build(const SrFrame* frame, SrScreen* screen);
 
 /** All focus rows joined with ", ". Returns the length written. */
