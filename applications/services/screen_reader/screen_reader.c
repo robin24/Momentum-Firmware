@@ -9,25 +9,35 @@
 #include <input/input.h>
 #include <desktop/desktop.h>
 #include <dolphin/dolphin.h>
+#include <storage/storage.h>
 #include <momentum/settings.h>
 
 #define TAG "ScreenReader"
 
-#define SR_FLAG_FRAME      (1 << 0)
-#define SR_FLAG_COMMAND    (1 << 1)
-#define SR_FLAG_UNLOCKED   (1 << 2)
-#define SR_FLAG_LOCKED     (1 << 3)
-#define SR_FLAG_LOCKED_PIN (1 << 4)
-#define SR_FLAG_DOLPHIN    (1 << 5)
-#define SR_FLAG_LOCK_ANY   (SR_FLAG_UNLOCKED | SR_FLAG_LOCKED | SR_FLAG_LOCKED_PIN)
-#define SR_FLAG_ALL        (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_LOCK_ANY | SR_FLAG_DOLPHIN)
-#define SR_SETTLE_MS       50
-#define SR_MAX_LATENCY_MS  300
-#define SR_KEY_RECENT_MS   500
-#define SR_DESKTOP_KEY_MS  2000
-// A level up waits this long before it is said: the deed that brings it usually changes the
-// screen, and the new screen's announcement, which interrupts, is made first
-#define SR_LEVEL_HOLD_MS   1000
+#define SR_FLAG_FRAME        (1 << 0)
+#define SR_FLAG_COMMAND      (1 << 1)
+#define SR_FLAG_UNLOCKED     (1 << 2)
+#define SR_FLAG_LOCKED       (1 << 3)
+#define SR_FLAG_LOCKED_PIN   (1 << 4)
+#define SR_FLAG_DOLPHIN      (1 << 5)
+#define SR_FLAG_STORAGE      (1 << 6)
+#define SR_FLAG_LOCK_ANY     (SR_FLAG_UNLOCKED | SR_FLAG_LOCKED | SR_FLAG_LOCKED_PIN)
+#define SR_FLAG_SERVICES     (SR_FLAG_LOCK_ANY | SR_FLAG_DOLPHIN | SR_FLAG_STORAGE)
+#define SR_FLAG_ALL          (SR_FLAG_FRAME | SR_FLAG_COMMAND | SR_FLAG_SERVICES)
+#define SR_SETTLE_MS         50
+#define SR_MAX_LATENCY_MS    300
+#define SR_KEY_RECENT_MS     500
+#define SR_DESKTOP_KEY_MS    2000
+// A level up waits this long before it is said, and this long again after every interrupting
+// announcement while it waits: the deed that brings it usually changes the screen, sometimes
+// twice, and those screens are read first. Two seconds, because the core apps' popups, a Save's
+// "Saved!" among them, close by themselves after up to 1.5 s, and the screen after the popup must
+// come while the level up still waits. It never waits longer than SR_LEVEL_HOLD_MAX_MS
+#define SR_LEVEL_HOLD_MS     2000
+#define SR_LEVEL_HOLD_MAX_MS 5000
+// A card mount reaches the reader before the dolphin, which then queues a reload of its state:
+// this long a pause lets that reload go ahead of the reader's question for the level
+#define SR_MOUNT_SETTLE_MS   50
 
 // The lock screen's own words (desktop_view_locked.c, whose note writes the 3 as a digit to fit a
 // tap record), said when the desktop locks. Quickly: after 600 ms without a key it counts afresh
@@ -75,10 +85,14 @@ struct ScreenReader {
 
     // The dolphin, for its level and mood; null until its record exists (sr_subscribe_dolphin).
     // Its pubsub callback only sets a flag; the service thread alone asks for the stats and keeps
-    // the level last seen, and a level up held until its time comes (0: none)
+    // the level last seen, and a level up held from held_level_since until held_level_due (0:
+    // none). Card mounts, after which the dolphin may have loaded its state afresh, set a flag
     Dolphin* dolphin;
+    FuriPubSubSubscription* dolphin_subscription;
+    FuriPubSubSubscription* storage_subscription;
     uint8_t last_level;
     uint8_t held_level;
+    uint32_t held_level_since;
     uint32_t held_level_due;
 
     // Same-screen changes said at most once per change delay, the latest held until its time
@@ -236,14 +250,46 @@ static void sr_dolphin_callback(const void* message, void* context) {
 static void sr_subscribe_dolphin(ScreenReader* sr) {
     if(sr->dolphin || !furi_record_exists(RECORD_DOLPHIN)) return;
     sr->dolphin = furi_record_open(RECORD_DOLPHIN);
-    furi_pubsub_subscribe(dolphin_get_pubsub(sr->dolphin), sr_dolphin_callback, sr);
+    sr->dolphin_subscription =
+        furi_pubsub_subscribe(dolphin_get_pubsub(sr->dolphin), sr_dolphin_callback, sr);
     sr->last_level = dolphin_stats(sr->dolphin).level;
+}
+
+// Storage's thread, on card events. Only a flag, and only for a mount: when the card was not
+// ready as the dolphin started, it loads its state on the mount and publishes nothing, so the
+// level the reader noted may be stale
+static void sr_storage_callback(const void* message, void* context) {
+    const StorageEvent* event = message;
+    ScreenReader* sr = context;
+    if(event->type == StorageEventTypeCardMount) {
+        furi_thread_flags_set(sr->thread_id, SR_FLAG_STORAGE);
+    }
+}
+
+// After a card mount, on the service thread: the level is noted afresh, silently. Subscribers
+// hear of a mount newest first, the reader before the dolphin, which queues its reload then; its
+// queue is first in, first out, so after a pause the reader's question comes after that reload
+static void sr_reread_level(ScreenReader* sr) {
+    if(!sr->dolphin) return;
+    furi_delay_ms(SR_MOUNT_SETTLE_MS);
+    sr->last_level = dolphin_stats(sr->dolphin).level;
+}
+
+// An interrupting announcement while a level up is held: the screen that came with the deed, or
+// the one after it (a Save's popup closes by itself after 1.5 s). The level up waits
+// SR_LEVEL_HOLD_MS more from now, so it is queued behind that screen, but never past
+// SR_LEVEL_HOLD_MAX_MS after the level rose. The service thread alone uses these fields
+static void sr_hold_level_longer(ScreenReader* sr) {
+    if(!sr->held_level) return;
+    uint32_t due = furi_get_tick() + SR_LEVEL_HOLD_MS;
+    uint32_t last = sr->held_level_since + SR_LEVEL_HOLD_MAX_MS;
+    sr->held_level_due = (int32_t)(due - last) > 0 ? last : due;
 }
 
 // Every announcement that is said goes through here, with the mutex held: counted, said while
 // the reader is on (at the volume as saved), and mirrored to the console. It interrupts what is
-// being said when it asks to; a change on the same screen waits its turn instead and replaces a
-// change still waiting
+// being said when it asks to, and then holds a waiting level up longer; a change on the same
+// screen waits its turn instead and replaces a change still waiting
 static void sr_announce(ScreenReader* sr, const SrAnnouncement* a) {
     sr->stats.announcements++;
     if(momentum_settings.screen_reader) {
@@ -251,6 +297,7 @@ static void sr_announce(ScreenReader* sr, const SrAnnouncement* a) {
         speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
     }
     if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
+    if(a->interrupt) sr_hold_level_longer(sr);
 }
 
 // The desktop's quiet rules, for an announcement on a screen of this layer at now, since_press
@@ -283,7 +330,8 @@ static bool sr_quiet(
 // and a level up come without a key press. A lock interrupts what is being said and starts the
 // desktop's quiet window (sr_quiet). "Unlocked" and a level up wait for what is being said
 // instead (the key that unlocked has silenced speech already); the "Home screen" that follows an
-// unlock, when the lock screen's text goes away, is queued behind it. A held change is dropped
+// unlock, when the lock screen's text goes away, is queued behind it. A lock or an unlock drops a
+// held change, whose screen is gone; a level up keeps it, and the change is said in its turn
 static void sr_say_event(ScreenReader* sr, SrAnnKind kind, const char* text, bool interrupt) {
     if(!momentum_settings.screen_reader) return;
     sr_lock(sr);
@@ -295,20 +343,24 @@ static void sr_say_event(ScreenReader* sr, SrAnnKind kind, const char* text, boo
         sr->lock_said = true;
         sr->lock_said_tick = furi_get_tick();
     }
-    sr_throttle_clear(&sr->throttle);
+    if(kind == SrAnnLock) sr_throttle_clear(&sr->throttle);
     sr_announce(sr, a);
     sr_unlock(sr);
 }
 
 // After a deed or a level up, on the service thread, which may wait briefly for the dolphin. A
-// level above the last one seen is a level up: held for SR_LEVEL_HOLD_MS, then said as "Level up,
-// level 4"; a second rise meanwhile only updates the level to be said. The level set by hand in
-// Momentum, Misc, Dolphin shows at the next deed: a lower one is only noted, a higher one is said
-// like a level up. Noted with the reader off too, so turning it on says nothing stale
+// level above the last one seen is a level up: held for SR_LEVEL_HOLD_MS, longer while screens
+// change (sr_hold_level_longer), then said as "Level up, level 4"; a second rise meanwhile only
+// updates the level to be said. The level set by hand in Momentum, Misc, Dolphin shows at the
+// next deed: a lower one is only noted, a higher one is said like a level up. Noted with the
+// reader off too, so turning it on says nothing stale
 static void sr_check_level(ScreenReader* sr) {
     DolphinStats stats = dolphin_stats(sr->dolphin);
     if(stats.level > sr->last_level) {
-        if(!sr->held_level) sr->held_level_due = furi_get_tick() + SR_LEVEL_HOLD_MS;
+        if(!sr->held_level) {
+            sr->held_level_since = furi_get_tick();
+            sr->held_level_due = sr->held_level_since + SR_LEVEL_HOLD_MS;
+        }
         sr->held_level = stats.level;
     }
     sr->last_level = stats.level;
@@ -561,10 +613,16 @@ int32_t screen_reader_srv(void* p) {
     sr->gui = furi_record_open(RECORD_GUI);
     gui_tap_set(sr->gui, &screen_reader_tap, sr);
     sr_subscribe_desktop(sr);
-    sr_subscribe_dolphin(sr);
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    sr->storage_subscription =
+        furi_pubsub_subscribe(storage_get_pubsub(storage), sr_storage_callback, sr);
+    furi_record_close(RECORD_STORAGE);
 
     furi_record_create(RECORD_SCREEN_READER, sr);
     screen_reader_cli_register(sr);
+    // After the record and the console, as dolphin_stats may wait for the dolphin; a frame tries
+    // again if the dolphin's record is not there yet
+    sr_subscribe_dolphin(sr);
     FURI_LOG_I(TAG, "Started, enabled=%d", momentum_settings.screen_reader);
 
     bool pending = false;
@@ -622,7 +680,9 @@ int32_t screen_reader_srv(void* p) {
             if(!pending) pending_since = furi_get_tick();
             pending = true;
         }
-        // A level up is held here and said when its time comes
+        // A mount first, so a level up is measured against a level noted afresh; a level up is
+        // held here and said when its time comes
+        if(flags & SR_FLAG_STORAGE) sr_reread_level(sr);
         if(flags & SR_FLAG_DOLPHIN) sr_check_level(sr);
         if(!pending) {
             sr_say_held_change(sr);
