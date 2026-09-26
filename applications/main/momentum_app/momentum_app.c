@@ -1,5 +1,6 @@
 #include "momentum_app.h"
 #include <string.h>
+#include <screen_reader/speech_voice.h>
 
 static bool momentum_app_custom_event_callback(void* context, uint32_t event) {
     furi_assert(context);
@@ -353,6 +354,48 @@ MomentumApp* momentum_app_alloc() {
     free(name);
     storage_file_free(folder);
 
+    // The recorded voice sets on the card: same scan as asset packs above, but sorted by
+    // strcmp (byte order), not case-insensitively, so index 0 is the set the engine's own
+    // fallback picks (speech_voice_set_before keeps the smallest name by strcmp). The read
+    // buffer is one byte longer than a set name so a longer name is seen as such and skipped
+    // (see the listing rule below).
+    app->voice_set_index = 0;
+    CharList_init(app->voice_set_names);
+    bool voice_set_found = false;
+    File* voice_folder = storage_file_alloc(app->storage);
+    FileInfo voice_info;
+    char* voice_name = malloc(SPEECH_VOICE_SET_MAX + 1);
+    if(storage_dir_open(voice_folder, SPEECH_VOICE_SETS_DIR)) {
+        while(storage_dir_read(voice_folder, &voice_info, voice_name, SPEECH_VOICE_SET_MAX + 1)) {
+            // Directories only, no dot-names, 1 to SPEECH_VOICE_SET_MAX - 1 characters: the
+            // same three rules as speech_voice_set_listable
+            // (applications/services/screen_reader/speech_voice.h), inlined because a .fap's
+            // symbols must resolve against the firmware's exported API table, which this
+            // function is not part of.
+            size_t voice_len = strlen(voice_name);
+            if(!(voice_info.flags & FSF_DIRECTORY) || voice_len == 0 ||
+               voice_len > SPEECH_VOICE_SET_MAX - 1 || voice_name[0] == '.')
+                continue;
+            char* voice_copy = strdup(voice_name);
+            size_t voice_idx = 0;
+            for(; voice_idx < CharList_size(app->voice_set_names); voice_idx++) {
+                char* voice_comp = *CharList_get(app->voice_set_names, voice_idx);
+                if(strcmp(voice_copy, voice_comp) < 0) {
+                    break;
+                }
+            }
+            CharList_push_at(app->voice_set_names, voice_idx, voice_copy);
+            if(voice_set_found) {
+                if(voice_idx <= app->voice_set_index) app->voice_set_index++;
+            } else if(strcmp(voice_copy, momentum_settings.sr_voice_set) == 0) {
+                app->voice_set_index = voice_idx;
+                voice_set_found = true;
+            }
+        }
+    }
+    free(voice_name);
+    storage_file_free(voice_folder);
+
     CharList_init(app->mainmenu_app_labels);
     CharList_init(app->mainmenu_app_exes);
     momentum_app_load_mainmenu_apps(app);
@@ -462,6 +505,11 @@ void momentum_app_free(MomentumApp* app) {
         free(*CharList_cref(it));
     }
     CharList_clear(app->asset_pack_names);
+
+    for(CharList_it(it, app->voice_set_names); !CharList_end_p(it); CharList_next(it)) {
+        free(*CharList_cref(it));
+    }
+    CharList_clear(app->voice_set_names);
 
     momentum_app_empty_mainmenu_apps(app);
     CharList_clear(app->mainmenu_app_labels);

@@ -66,6 +66,8 @@ typedef struct {
 
     CharList_t asset_pack_names;
     uint8_t asset_pack_index;
+    CharList_t voice_set_names;
+    uint8_t voice_set_index;
     CharList_t mainmenu_app_labels;
     CharList_t mainmenu_app_exes;
     uint8_t mainmenu_app_index;

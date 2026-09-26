@@ -2,6 +2,7 @@
 
 enum VarItemListIndex {
     VarItemListIndexScreenReader,
+    VarItemListIndexVoice,
     VarItemListIndexVolume,
     VarItemListIndexVerbosity,
     VarItemListIndexChangeDelay,
@@ -23,6 +24,17 @@ static void momentum_app_scene_accessibility_screen_reader_changed(VariableItem*
     bool value = variable_item_get_current_value_index(item);
     variable_item_set_current_value_text(item, value ? "ON" : "OFF");
     momentum_settings.screen_reader = value;
+    app->save_settings = true;
+}
+
+static void momentum_app_scene_accessibility_voice_changed(VariableItem* item) {
+    MomentumApp* app = variable_item_get_context(item);
+    if(CharList_size(app->voice_set_names) == 0) return;
+    uint8_t index = variable_item_get_current_value_index(item);
+    const char* name = *CharList_get(app->voice_set_names, index);
+    variable_item_set_current_value_text(item, name);
+    strlcpy(momentum_settings.sr_voice_set, name, SR_VOICE_SET_LEN);
+    app->voice_set_index = index;
     app->save_settings = true;
 }
 
@@ -107,6 +119,17 @@ void momentum_app_scene_accessibility_on_enter(void* context) {
     value_index = momentum_settings.screen_reader;
     variable_item_set_current_value_index(item, value_index);
     variable_item_set_current_value_text(item, value_index ? "ON" : "OFF");
+
+    size_t voice_sets = CharList_size(app->voice_set_names);
+    item = variable_item_list_add(
+        var_item_list,
+        "Voice",
+        voice_sets ? voice_sets : 1,
+        momentum_app_scene_accessibility_voice_changed,
+        app);
+    variable_item_set_current_value_index(item, voice_sets ? app->voice_set_index : 0);
+    variable_item_set_current_value_text(
+        item, voice_sets ? *CharList_get(app->voice_set_names, app->voice_set_index) : "None");
 
     item = variable_item_list_add(
         var_item_list,
