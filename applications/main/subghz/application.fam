@@ -17,8 +17,8 @@ App(
     # Add Manually files (subghz_add_manually fap).
     sources=[
         "subghz.c",
-        "subghz_i.c",
         "subghz_history.c",
+        "subghz_i.c",
         "subghz_last_settings.c",
         "helpers/subghz_frequency_analyzer_worker.c",
         "helpers/subghz_gps_plugin.c",
