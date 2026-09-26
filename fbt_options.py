@@ -4,7 +4,8 @@ import os
 
 # For more details on these options, run 'fbt -h'
 
-FIRMWARE_ORIGIN = "Momentum"
+# The fork's name: `info device` shows it as firmware.origin.fork, the About screen speaks it
+FIRMWARE_ORIGIN = "Sonar"
 
 # Default hardware target
 TARGET_HW = 7
