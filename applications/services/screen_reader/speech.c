@@ -74,6 +74,8 @@ struct Speech {
     char last_set[SPEECH_VOICE_SET_MAX]; /* the set resolved before; stays while none is in use */
     char voice_settings[64]; /* first line of the set's voice.txt */
     File* voice_file; /* reused for every clip, the missing log and the look for a set */
+    bool clip_tried; /* the current item tried to open a clip */
+    bool clip_opened; /* and opened at least one */
     SpeechVoiceState voice;
     char path[SPEECH_VOICE_PATH_MAX];
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
@@ -293,11 +295,11 @@ static void speech_item_end(Speech* speech) {
 }
 
 /**
- * The voice sets on the card, through fn: the folders under SPEECH_VOICE_SETS_DIR in the order
- * the card lists them, but for a name that starts with a dot or is longer than a set name can be
- * (read one byte longer, to tell). dir is a closed handle, closed again at the end, so the
- * worker passes its own and speech_voice_sets one of its own. Returns the count; 0 without a
- * card or without the folder.
+ * The voice sets on the card, through fn: the folders under SPEECH_VOICE_SETS_DIR that
+ * speech_voice_set_listable takes, in the order the card lists them (a name is read one byte
+ * longer than a set name, so that a longer one is seen as such and left out). dir is a closed
+ * handle, closed again at the end, so the worker passes its own and speech_voice_sets one of
+ * its own. Returns the count; 0 without a card or without the folder.
  */
 static size_t
     speech_voice_walk(File* dir, void (*fn)(const char* name, void* context), void* context) {
@@ -306,8 +308,7 @@ static size_t
     size_t count = 0;
     if(storage_dir_open(dir, SPEECH_VOICE_SETS_DIR)) {
         while(storage_dir_read(dir, &info, name, sizeof(name))) {
-            if(!(info.flags & FSF_DIRECTORY) || name[0] == '.') continue;
-            if(strlen(name) > SPEECH_VOICE_SET_MAX - 1) continue;
+            if(!(info.flags & FSF_DIRECTORY) || !speech_voice_set_listable(name)) continue;
             fn(name, context);
             count++;
         }
@@ -316,10 +317,27 @@ static size_t
     return count;
 }
 
-// speech_voice_walk's fn for the fallback: keeps the smallest name by strcmp
+// speech_voice_walk's fn for the fallback: keeps the smallest name (speech_voice_set_before)
 static void speech_voice_keep_first(const char* name, void* context) {
     char* first = context;
-    if(first[0] == '\0' || strcmp(name, first) < 0) strlcpy(first, name, SPEECH_VOICE_SET_MAX);
+    if(speech_voice_set_before(name, first)) strlcpy(first, name, SPEECH_VOICE_SET_MAX);
+}
+
+/**
+ * No set in use, so that the next text item resolves one: without a card, when a set is asked
+ * for, and after an item that opened no clip at all. The set's name and settings line go too.
+ */
+static void speech_voice_forget(Speech* speech) {
+    speech->vocabulary = false;
+    speech->set[0] = '\0';
+    speech->voice_settings[0] = '\0';
+}
+
+// Whether the card has the folder of the set asked for; false when none was asked for
+static bool speech_voice_wanted_there(Speech* speech) {
+    return speech->wanted[0] != '\0' &&
+           speech_voice_set_file(speech->wanted, "", speech->path, sizeof(speech->path)) > 0 &&
+           storage_dir_exists(speech->storage, speech->path);
 }
 
 /**
@@ -333,41 +351,44 @@ static void speech_take_voice_set(Speech* speech) {
     if(speech->set_changed) {
         strlcpy(speech->wanted, speech->wanted_set, sizeof(speech->wanted));
         speech->set_changed = false;
-        speech->vocabulary = false;
-        speech->set[0] = '\0';
-        speech->voice_settings[0] = '\0';
+        speech_voice_forget(speech);
     }
     speech_unlock(speech);
 }
 
 /**
  * The card mounts after the services start, so the voice set is resolved when it is first
- * needed and then remembered while the card stays mounted and the set asked for stays the same.
- * A removed card is noticed at the next utterance and the set is resolved again once a card is
- * back. The set asked for is used when its folder is on the card; otherwise, and when none was
- * asked for, the first set in name order, silently: sr voice status shows both names. With no
- * set at all the item is silent and the next one looks again. Reads the set's settings line
- * for sr voice status.
+ * needed and then kept while the card stays mounted. It is resolved again after a card mount
+ * (a removal is noticed at the next utterance), when a set is asked for (sr voice use asks even
+ * for the one in use), after an item that tried clips and opened none (the set's folder has
+ * gone), and on a fallback as soon as the folder of the set asked for is on the card: one look
+ * at the card per item, and only while on a fallback. The set asked for is used when its folder
+ * is there; otherwise, and when none was asked for, the first set in name order, silently: sr
+ * voice status shows both names. With no set at all the item is silent and the next one looks
+ * again. Reads the set's settings line for sr voice status.
  */
 static bool speech_voice_ready(Speech* speech) {
     if(storage_sd_status(speech->storage) != FSE_OK) {
-        speech->vocabulary = false;
-        speech->set[0] = '\0';
-        speech->voice_settings[0] = '\0';
+        speech_voice_forget(speech);
         return false;
     }
-    if(speech->vocabulary) return true;
+    bool wanted_there;
+    if(speech->vocabulary) {
+        bool fallback = speech->wanted[0] != '\0' && strcmp(speech->wanted, speech->set) != 0;
+        if(!fallback || !speech_voice_wanted_there(speech)) return true;
+        wanted_there = true;
+    } else {
+        wanted_there = speech_voice_wanted_there(speech);
+    }
 
-    speech->voice_settings[0] = '\0';
-    if(speech->wanted[0] != '\0' &&
-       speech_voice_set_file(speech->wanted, "", speech->path, sizeof(speech->path)) > 0 &&
-       storage_dir_exists(speech->storage, speech->path)) {
+    speech_voice_forget(speech);
+    if(wanted_there) {
         strlcpy(speech->set, speech->wanted, sizeof(speech->set));
     } else {
         char first[SPEECH_VOICE_SET_MAX] = "";
         speech_voice_walk(speech->voice_file, speech_voice_keep_first, first);
+        if(first[0] == '\0') return false;
         strlcpy(speech->set, first, sizeof(speech->set));
-        if(speech->set[0] == '\0') return false;
     }
     speech->vocabulary = true;
     // Another set than before (at the first resolution there is nothing to forget yet): its
@@ -418,10 +439,12 @@ static bool speech_play_clip(Speech* speech, const char* path) {
     uint32_t took = furi_get_tick() - start;
     speech->open_last_ms = took;
     if(took > speech->open_max_ms) speech->open_max_ms = took;
+    speech->clip_tried = true;
     if(!opened) {
         storage_file_close(file);
         return false;
     }
+    speech->clip_opened = true;
     while(!speech->aborted) {
         size_t n = storage_file_read(file, speech->file_buffer, SPEECH_FILE_CHUNK);
         if(n == 0) break;
@@ -531,9 +554,16 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     }
     if(!spell) speech_text_expand(item->text, speech->expanded, sizeof(speech->expanded));
     speech->started = furi_get_tick();
+    speech->clip_tried = false;
+    speech->clip_opened = false;
     speech_speak_words(speech, spell);
     speech_item_end(speech);
     speech_write_missing(speech);
+    // Clips tried and not one opened, not even a letter: the set's folder has most likely gone
+    // from the card, so the next item resolves the set again. With the folder there, an item
+    // that tries clips opens one, but for a word with no letter or digit clip to spell it
+    // with, after which the same set is merely resolved again. Nothing on the normal path
+    if(speech->clip_tried && !speech->clip_opened) speech_voice_forget(speech);
 }
 
 static uint32_t speech_clamp_rate(uint32_t rate) {
@@ -757,14 +787,19 @@ void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     out->wanted[sizeof(out->wanted) - 1] = '\0';
 }
 
-void speech_set_voice_set(Speech* speech, const char* set) {
+void speech_set_voice_set(Speech* speech, const char* set, bool force) {
     furi_check(speech && set);
+    // A name the engine would not take as a folder, as from a settings file edited by hand,
+    // means the first set found, as an empty one does. It is checked on a copy of its own, one
+    // byte longer than a set name, as the saved name may be written meanwhile on another thread
+    char name[SPEECH_VOICE_SET_MAX + 1];
+    strlcpy(name, set, sizeof(name));
+    if(!speech_voice_set_listable(name)) name[0] = '\0';
     // The reader passes the saved name before every announcement, so an unchanged one costs a
-    // compare and nothing else. It is compared as far as it is kept: a name cut at 31
-    // characters is not taken for a new one every time
+    // compare and nothing else; sr voice use forces a fresh resolution even for the same name
     speech_lock(speech);
-    if(strncmp(speech->wanted_set, set, sizeof(speech->wanted_set) - 1) != 0) {
-        strlcpy(speech->wanted_set, set, sizeof(speech->wanted_set));
+    if(force || strcmp(speech->wanted_set, name) != 0) {
+        strlcpy(speech->wanted_set, name, sizeof(speech->wanted_set));
         speech->set_changed = true;
     }
     speech_unlock(speech);

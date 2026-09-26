@@ -221,7 +221,7 @@ static void sr_push_volume(ScreenReader* sr) {
 // momentum_settings, and the engine takes a changed name from the next utterance on. An
 // unchanged one costs a string compare
 static void sr_push_voice_set(ScreenReader* sr) {
-    speech_set_voice_set(sr->speech, momentum_settings.sr_voice_set);
+    speech_set_voice_set(sr->speech, momentum_settings.sr_voice_set, false);
 }
 
 // Desktop thread, from desktop_lock and desktop_unlock. Only desktop_unlock publishes locked

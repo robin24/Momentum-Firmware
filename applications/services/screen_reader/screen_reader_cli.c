@@ -193,7 +193,8 @@ static bool sr_cli_voice_set_exists(const char* set) {
 }
 
 // sr voice use <set>: a set on the card, or auto for the first found (the setting emptied).
-// Saved, and passed to the engine at once, which speaks in it from the next utterance on
+// Saved, and passed to the engine at once, which resolves the set afresh at the next utterance,
+// also for the name already in use: a set synced again, or back after a fallback, is taken
 static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
     FuriString* name = furi_string_alloc();
     do {
@@ -210,7 +211,7 @@ static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
         }
         strlcpy(momentum_settings.sr_voice_set, set, sizeof(momentum_settings.sr_voice_set));
         momentum_settings_save();
-        speech_set_voice_set(screen_reader_get_speech(sr), set);
+        speech_set_voice_set(screen_reader_get_speech(sr), set, true);
         if(set[0] != '\0') {
             printf("voice set: %s\r\n", set);
         } else {

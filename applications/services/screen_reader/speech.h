@@ -88,14 +88,18 @@ void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
 
 /** Use the voice set of that name, a folder under /ext/sr/voices, from the next utterance on.
  *  An empty name, or a name whose folder the card lacks, means the first set found in name
- *  order; with no set at all the engine is silent, as without a card. Takes the mutex briefly;
- *  callers are threads. The name is cut at 31 characters. */
-void speech_set_voice_set(Speech* speech, const char* set);
+ *  order, and a set asked for is taken as soon as its folder is on the card; a name the engine
+ *  would not list (speech_voice_set_listable: hidden, over 31 characters, or a path) counts as
+ *  empty. With no set at all the engine is silent, as without a card. An unchanged name is
+ *  ignored unless force is set, as sr voice use does: then the set is resolved afresh at the
+ *  next utterance, which also takes a set added to the card or synced again since. Takes the
+ *  mutex briefly; callers are threads. */
+void speech_set_voice_set(Speech* speech, const char* set, bool force);
 
-/** The sets on the card: fn(name, context) for every folder under /ext/sr/voices, in the
- *  order the card lists them, but for a hidden one (its name starts with a dot) and one whose
- *  name is longer than 31 characters, which no setting holds; the engine never picks those
- *  either. Returns the count. Any thread; opens its own directory handle. */
+/** The sets on the card: fn(name, context) for every folder under /ext/sr/voices that the
+ *  engine takes as a set (speech_voice_set_listable: not hidden, at most 31 characters), in
+ *  the order the card lists them; the engine's fallback picks from the same names. Returns the
+ *  count. Any thread; opens its own directory handle. */
 size_t
     speech_voice_sets(Speech* speech, void (*fn)(const char* name, void* context), void* context);
 

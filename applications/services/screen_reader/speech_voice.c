@@ -68,6 +68,16 @@ bool speech_voice_set_valid(const char* name) {
     return true;
 }
 
+bool speech_voice_set_listable(const char* name) {
+    size_t n = strlen(name);
+    if(n == 0 || n > SPEECH_VOICE_SET_MAX - 1 || name[0] == '.') return false;
+    return strchr(name, '/') == NULL && strchr(name, '\\') == NULL;
+}
+
+bool speech_voice_set_before(const char* candidate, const char* current) {
+    return current[0] == '\0' || strcmp(candidate, current) < 0;
+}
+
 size_t speech_voice_set_file(const char* set, const char* file, char* out, size_t out_size) {
     size_t s = strlen(set);
     size_t f = strlen(file);
