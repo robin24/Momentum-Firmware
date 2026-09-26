@@ -48,7 +48,7 @@ MomentumSettings momentum_settings = {
     .rpc_color_fg = {{ScreenColorModeDefault, {.value = 0x000000}}}, // Default Black
     .rpc_color_bg = {{ScreenColorModeDefault, {.value = 0xFF8200}}}, // Default Orange
     .screen_reader = true, // ON: a device with no saved settings speaks from its first boot
-    .sr_volume = 100, // %
+    .sr_volume = 80, // %: the update boot and a fresh device speak at this level
     .sr_verbosity = 1, // Normal
     .sr_change_ms = SR_CHANGE_MS_DEFAULT, // a same-screen change is said at most once per 3 s
     .desktop_anims = false, // OFF: the home screen loads no animation
