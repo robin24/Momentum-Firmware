@@ -15,9 +15,10 @@
 extern "C" {
 #endif
 
-#define SPEECH_VOICE_DIR         "/ext/sr/voice"
+#define SPEECH_VOICE_SETS_DIR "/ext/sr/voices" /**< one folder per voice set */
+#define SPEECH_VOICE_SET_MAX  32 /**< set name with its terminator */
+#define SPEECH_VOICE_PATH_MAX 96 /**< "/ext/sr/voices/" + set + "/hh/" + name + ".raw" */
 #define SPEECH_VOICE_WORD_MAX    32 /**< clip name with its terminator */
-#define SPEECH_VOICE_PATH_MAX    64 /**< "/ext/sr/voice/hh/" + name + ".raw" */
 #define SPEECH_VOICE_BUCKETS     64 /**< clip folders on the card, chosen by the word's hash */
 #define SPEECH_VOICE_MISSING_SET 64 /**< words remembered as missing, once per boot each */
 #define SPEECH_VOICE_LOG_MAX     8 /**< missing words kept for the log per utterance */
@@ -46,12 +47,22 @@ bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out)
 /** FNV-1a, 32 bit, over the bytes of a word: the clip folder and the missing-word set. */
 uint32_t speech_voice_hash(const char* word);
 
-/** The clip path of a word: SPEECH_VOICE_DIR "/<hh>/<word>.raw", where hh is
- *  speech_voice_hash(word) modulo SPEECH_VOICE_BUCKETS as two lower case hex digits. A
- *  directory lookup on the card reads the entries one by one, so the vocabulary is spread over
- *  64 folders of a few dozen clips each. Returns the length written, 0 for an empty word or a
- *  buffer too small. */
-size_t speech_voice_path(const char* word, char* out, size_t out_size);
+/** True for a set name the card and the settings can hold: 1 to SPEECH_VOICE_SET_MAX - 1
+ *  characters, each a lower case letter, a digit, a hyphen or an underscore. */
+bool speech_voice_set_valid(const char* name);
+
+/** SPEECH_VOICE_SETS_DIR "/<set>/<file>", or the set's folder itself for an empty file name.
+ *  Returns the length written, 0 for an empty set or a buffer too small. The set is not
+ *  validated here: the callers pass names that came through speech_voice_set_valid or from
+ *  the card's own folder listing. */
+size_t speech_voice_set_file(const char* set, const char* file, char* out, size_t out_size);
+
+/** The clip path of a word in a set: SPEECH_VOICE_SETS_DIR "/<set>/<hh>/<word>.raw", where
+ *  hh is speech_voice_hash(word) modulo SPEECH_VOICE_BUCKETS as two lower case hex digits. A
+ *  directory lookup on the card reads the entries one by one, so a vocabulary is spread over
+ *  64 folders of a few dozen clips each. Returns the length written, 0 for an empty set or
+ *  word, or a buffer too small. */
+size_t speech_voice_path(const char* set, const char* word, char* out, size_t out_size);
 
 /** The clip name that spells one character: "ay" for a, the letter itself for b to z, the
  *  digit itself for 0 to 9. False for anything else (the character is skipped). */

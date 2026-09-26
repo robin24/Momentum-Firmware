@@ -56,17 +56,52 @@ uint32_t speech_voice_hash(const char* word) {
     return h;
 }
 
-size_t speech_voice_path(const char* word, char* out, size_t out_size) {
+bool speech_voice_set_valid(const char* name) {
+    size_t n = strlen(name);
+    if(n == 0 || n > SPEECH_VOICE_SET_MAX - 1) return false;
+    for(size_t i = 0; i < n; i++) {
+        char c = name[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if(!ok) return false;
+    }
+    return true;
+}
+
+size_t speech_voice_set_file(const char* set, const char* file, char* out, size_t out_size) {
+    size_t s = strlen(set);
+    size_t f = strlen(file);
+    if(s == 0) return 0;
+    size_t dir = strlen(SPEECH_VOICE_SETS_DIR);
+    size_t need = dir + 1 + s + (f ? 1 + f : 0) + 1;
+    if(need > out_size) return 0;
+    char* p = out;
+    memcpy(p, SPEECH_VOICE_SETS_DIR, dir);
+    p += dir;
+    *p++ = '/';
+    memcpy(p, set, s);
+    p += s;
+    if(f) {
+        *p++ = '/';
+        memcpy(p, file, f);
+        p += f;
+    }
+    *p = '\0';
+    return (size_t)(p - out);
+}
+
+size_t speech_voice_path(const char* set, const char* word, char* out, size_t out_size) {
     static const char hex[] = "0123456789abcdef";
     size_t n = strlen(word);
     if(n == 0) return 0;
-    uint32_t bucket = speech_voice_hash(word) % SPEECH_VOICE_BUCKETS;
-    size_t dir = strlen(SPEECH_VOICE_DIR);
+    size_t dir = speech_voice_set_file(set, "", out, out_size);
+    if(dir == 0) return 0;
     size_t need = dir + 4 + n + 4 + 1; // "/hh/" name ".raw" NUL
-    if(need > out_size) return 0;
-    char* p = out;
-    memcpy(p, SPEECH_VOICE_DIR, dir);
-    p += dir;
+    if(need > out_size) {
+        out[0] = '\0';
+        return 0;
+    }
+    uint32_t bucket = speech_voice_hash(word) % SPEECH_VOICE_BUCKETS;
+    char* p = out + dir;
     *p++ = '/';
     *p++ = hex[(bucket >> 4) & 0xf];
     *p++ = hex[bucket & 0xf];
