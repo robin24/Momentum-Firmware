@@ -179,6 +179,15 @@ void momentum_settings_load(void) {
 }
 
 void momentum_settings_save(void) {
+    // In the update boots the internal storage is formatted and restored by the updater, and the
+    // settings in RAM are the compiled defaults, so a save there (a volume chord pressed during
+    // the update) would overwrite the restored file. The flag is set once at power-on and stays
+    // false for the whole update boot, including after the updater resets the boot mode.
+    if(!furi_hal_is_normal_boot()) {
+        FURI_LOG_I(TAG, "settings not saved: not a normal boot");
+        return;
+    }
+
     Storage* storage = furi_record_open(RECORD_STORAGE);
     FlipperFormat* file = flipper_format_file_alloc(storage);
 
