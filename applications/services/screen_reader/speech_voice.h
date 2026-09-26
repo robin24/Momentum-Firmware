@@ -15,9 +15,9 @@
 extern "C" {
 #endif
 
-#define SPEECH_VOICE_SETS_DIR "/ext/sr/voices" /**< one folder per voice set */
-#define SPEECH_VOICE_SET_MAX  32 /**< set name with its terminator */
-#define SPEECH_VOICE_PATH_MAX 96 /**< "/ext/sr/voices/" + set + "/hh/" + name + ".raw" */
+#define SPEECH_VOICE_SETS_DIR    "/ext/sr/voices" /**< one folder per voice set */
+#define SPEECH_VOICE_SET_MAX     32 /**< set name with its terminator */
+#define SPEECH_VOICE_PATH_MAX    96 /**< "/ext/sr/voices/" + set + "/hh/" + name + ".raw" */
 #define SPEECH_VOICE_WORD_MAX    32 /**< clip name with its terminator */
 #define SPEECH_VOICE_BUCKETS     64 /**< clip folders on the card, chosen by the word's hash */
 #define SPEECH_VOICE_MISSING_SET 64 /**< words remembered as missing, once per boot each */
@@ -48,7 +48,8 @@ bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out)
 uint32_t speech_voice_hash(const char* word);
 
 /** True for a set name the card and the settings can hold: 1 to SPEECH_VOICE_SET_MAX - 1
- *  characters, each a lower case letter, a digit, a hyphen or an underscore. */
+ *  characters, each a lower case letter, a digit, a hyphen or an underscore. The name auto is
+ *  not one: it is reserved for the first set found (sr voice use auto). */
 bool speech_voice_set_valid(const char* name);
 
 /** SPEECH_VOICE_SETS_DIR "/<set>/<file>", or the set's folder itself for an empty file name.
@@ -90,6 +91,11 @@ bool speech_voice_missing(SpeechVoiceState* state, const char* word);
 size_t speech_voice_log_count(const SpeechVoiceState* state);
 const char* speech_voice_log_word(const SpeechVoiceState* state, size_t index);
 void speech_voice_log_clear(SpeechVoiceState* state);
+
+/** Forget the words recorded so far and the log still waiting for the card, so that each word
+ *  is recorded once more: the worker calls it when it resolves a different set than before,
+ *  whose missing list has none of them. The counters since boot keep their values. */
+void speech_voice_missing_reset(SpeechVoiceState* state);
 
 #ifdef __cplusplus
 }

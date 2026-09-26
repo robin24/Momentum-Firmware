@@ -71,6 +71,7 @@ struct Speech {
     bool vocabulary; /* a set was resolved on the mounted card; false: resolve at the next item */
     char wanted[SPEECH_VOICE_SET_MAX]; /* wanted_set as the worker last took it */
     char set[SPEECH_VOICE_SET_MAX]; /* the set in use, empty while vocabulary is false */
+    char last_set[SPEECH_VOICE_SET_MAX]; /* the set resolved before; stays while none is in use */
     char voice_settings[64]; /* first line of the set's voice.txt */
     File* voice_file; /* reused for every clip, the missing log and the look for a set */
     SpeechVoiceState voice;
@@ -369,6 +370,13 @@ static bool speech_voice_ready(Speech* speech) {
         if(speech->set[0] == '\0') return false;
     }
     speech->vocabulary = true;
+    // Another set than before (at the first resolution there is nothing to forget yet): its
+    // missing list has none of the words recorded for the old one, so they are recorded afresh.
+    // The same set again (the card back, or a wanted name that fell back to it) keeps them
+    if(strcmp(speech->set, speech->last_set) != 0) {
+        speech_voice_missing_reset(&speech->voice);
+        strlcpy(speech->last_set, speech->set, sizeof(speech->last_set));
+    }
 
     File* file = speech->voice_file;
     if(speech_voice_set_file(speech->set, "voice.txt", speech->path, sizeof(speech->path)) > 0) {

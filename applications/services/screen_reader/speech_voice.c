@@ -59,6 +59,7 @@ uint32_t speech_voice_hash(const char* word) {
 bool speech_voice_set_valid(const char* name) {
     size_t n = strlen(name);
     if(n == 0 || n > SPEECH_VOICE_SET_MAX - 1) return false;
+    if(strcmp(name, "auto") == 0) return false; // reserved for the first set found
     for(size_t i = 0; i < n; i++) {
         char c = name[i];
         bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
@@ -159,5 +160,12 @@ const char* speech_voice_log_word(const SpeechVoiceState* state, size_t index) {
 }
 
 void speech_voice_log_clear(SpeechVoiceState* state) {
+    state->log_count = 0;
+}
+
+void speech_voice_missing_reset(SpeechVoiceState* state) {
+    memset(state->hashes, 0, sizeof(state->hashes));
+    state->next = 0;
+    state->count = 0;
     state->log_count = 0;
 }
