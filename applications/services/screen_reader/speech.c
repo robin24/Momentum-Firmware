@@ -26,13 +26,17 @@
 #define SPEECH_FLAG_HALF0 (1 << 2) /* DMA finished playing the first half */
 #define SPEECH_FLAG_HALF1 (1 << 3) /* DMA finished playing the second half */
 
-#define SPEECH_VOICE_HOLD_NS       (1000000000u / SPEECH_VOICE_HZ)
-#define SPEECH_SPELL_WORD_GAP_MS   150 /* at least this between the words of a spelled item */
-#define SPEECH_VOICE_MISSING_PATH  "/ext/sr/missing.txt"
-#define SPEECH_VOICE_SETTINGS_PATH SPEECH_VOICE_DIR "/voice.txt"
+#define SPEECH_VOICE_HOLD_NS     (1000000000u / SPEECH_VOICE_HZ)
+#define SPEECH_SPELL_WORD_GAP_MS 150 /* at least this between the words of a spelled item */
 
 // A spelled run must reach the clip player whole
 _Static_assert(SPEECH_TEXT_SPELL_RUN_MAX <= SPEECH_VOICE_WORD_MAX - 1, "spelled runs too long");
+
+// The voice status holds a set name whole; speech.h writes the size as a number
+_Static_assert(
+    sizeof(((SpeechVoiceStats*)0)->set) == SPEECH_VOICE_SET_MAX &&
+        sizeof(((SpeechVoiceStats*)0)->wanted) == SPEECH_VOICE_SET_MAX,
+    "the set names of SpeechVoiceStats must be SPEECH_VOICE_SET_MAX bytes");
 
 struct Speech {
     FuriThread* thread;
@@ -44,6 +48,8 @@ struct Speech {
     // Guarded by mutex
     SpeechQueue queue;
     SpeechStats stats;
+    char wanted_set[SPEECH_VOICE_SET_MAX]; /* the set asked for, empty for the first found */
+    volatile bool set_changed; /* wanted_set changed since the worker last took it */
 
     // Set by any thread, read by the worker
     volatile uint8_t volume;
@@ -62,9 +68,11 @@ struct Speech {
     char expanded[SPEECH_TEXT_MAX];
 
     // Recorded voice: written by the worker only, speech_get_voice_stats reads a snapshot
-    bool vocabulary; /* SPEECH_VOICE_DIR was found on the card */
-    char voice_settings[64]; /* first line of voice.txt */
-    File* voice_file; /* reused for every clip and the missing log */
+    bool vocabulary; /* a set was resolved on the mounted card; false: resolve at the next item */
+    char wanted[SPEECH_VOICE_SET_MAX]; /* wanted_set as the worker last took it */
+    char set[SPEECH_VOICE_SET_MAX]; /* the set in use, empty while vocabulary is false */
+    char voice_settings[64]; /* first line of the set's voice.txt */
+    File* voice_file; /* reused for every clip, the missing log and the look for a set */
     SpeechVoiceState voice;
     char path[SPEECH_VOICE_PATH_MAX];
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
@@ -284,29 +292,95 @@ static void speech_item_end(Speech* speech) {
 }
 
 /**
- * The card mounts after the services start, so the vocabulary is looked for when it is
- * first needed and then remembered while the card stays mounted. A removed card is noticed at
- * the next utterance and the vocabulary is looked for again once a card is back. Reads the
- * generator's settings line for sr voice status.
+ * The voice sets on the card, through fn: the folders under SPEECH_VOICE_SETS_DIR in the order
+ * the card lists them, but for a name that starts with a dot or is longer than a set name can be
+ * (read one byte longer, to tell). dir is a closed handle, closed again at the end, so the
+ * worker passes its own and speech_voice_sets one of its own. Returns the count; 0 without a
+ * card or without the folder.
+ */
+static size_t
+    speech_voice_walk(File* dir, void (*fn)(const char* name, void* context), void* context) {
+    char name[SPEECH_VOICE_SET_MAX + 1];
+    FileInfo info;
+    size_t count = 0;
+    if(storage_dir_open(dir, SPEECH_VOICE_SETS_DIR)) {
+        while(storage_dir_read(dir, &info, name, sizeof(name))) {
+            if(!(info.flags & FSF_DIRECTORY) || name[0] == '.') continue;
+            if(strlen(name) > SPEECH_VOICE_SET_MAX - 1) continue;
+            fn(name, context);
+            count++;
+        }
+    }
+    storage_dir_close(dir);
+    return count;
+}
+
+// speech_voice_walk's fn for the fallback: keeps the smallest name by strcmp
+static void speech_voice_keep_first(const char* name, void* context) {
+    char* first = context;
+    if(first[0] == '\0' || strcmp(name, first) < 0) strlcpy(first, name, SPEECH_VOICE_SET_MAX);
+}
+
+/**
+ * At the start of a text item: a set asked for since the last item is taken over, and the set
+ * is resolved again at speech_voice_ready; until then none is in use, also while the voice is
+ * off. speech_set_voice_set writes wanted_set and the flag under the mutex, on any thread; only
+ * the worker reads them, here.
+ */
+static void speech_take_voice_set(Speech* speech) {
+    speech_lock(speech);
+    if(speech->set_changed) {
+        strlcpy(speech->wanted, speech->wanted_set, sizeof(speech->wanted));
+        speech->set_changed = false;
+        speech->vocabulary = false;
+        speech->set[0] = '\0';
+        speech->voice_settings[0] = '\0';
+    }
+    speech_unlock(speech);
+}
+
+/**
+ * The card mounts after the services start, so the voice set is resolved when it is first
+ * needed and then remembered while the card stays mounted and the set asked for stays the same.
+ * A removed card is noticed at the next utterance and the set is resolved again once a card is
+ * back. The set asked for is used when its folder is on the card; otherwise, and when none was
+ * asked for, the first set in name order, silently: sr voice status shows both names. With no
+ * set at all the item is silent and the next one looks again. Reads the set's settings line
+ * for sr voice status.
  */
 static bool speech_voice_ready(Speech* speech) {
     if(storage_sd_status(speech->storage) != FSE_OK) {
         speech->vocabulary = false;
+        speech->set[0] = '\0';
         speech->voice_settings[0] = '\0';
         return false;
     }
     if(speech->vocabulary) return true;
-    if(!storage_dir_exists(speech->storage, SPEECH_VOICE_DIR)) return false;
-    speech->vocabulary = true;
-    File* file = speech->voice_file;
-    if(storage_file_open(file, SPEECH_VOICE_SETTINGS_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        size_t n =
-            storage_file_read(file, speech->voice_settings, sizeof(speech->voice_settings) - 1);
-        speech->voice_settings[n] = '\0';
-        char* nl = strpbrk(speech->voice_settings, "\r\n");
-        if(nl) *nl = '\0';
+
+    speech->voice_settings[0] = '\0';
+    if(speech->wanted[0] != '\0' &&
+       speech_voice_set_file(speech->wanted, "", speech->path, sizeof(speech->path)) > 0 &&
+       storage_dir_exists(speech->storage, speech->path)) {
+        strlcpy(speech->set, speech->wanted, sizeof(speech->set));
+    } else {
+        char first[SPEECH_VOICE_SET_MAX] = "";
+        speech_voice_walk(speech->voice_file, speech_voice_keep_first, first);
+        strlcpy(speech->set, first, sizeof(speech->set));
+        if(speech->set[0] == '\0') return false;
     }
-    storage_file_close(file);
+    speech->vocabulary = true;
+
+    File* file = speech->voice_file;
+    if(speech_voice_set_file(speech->set, "voice.txt", speech->path, sizeof(speech->path)) > 0) {
+        if(storage_file_open(file, speech->path, FSAM_READ, FSOM_OPEN_EXISTING)) {
+            size_t n = storage_file_read(
+                file, speech->voice_settings, sizeof(speech->voice_settings) - 1);
+            speech->voice_settings[n] = '\0';
+            char* nl = strpbrk(speech->voice_settings, "\r\n");
+            if(nl) *nl = '\0';
+        }
+        storage_file_close(file);
+    }
     return true;
 }
 
@@ -363,7 +437,7 @@ static void speech_spell_word(Speech* speech, const char* word) {
     for(const char* p = word; *p != '\0' && !speech->aborted; p++) {
         if(!speech_voice_letter_clip(*p, name)) continue;
         if(p != word && !speech_push_silence(speech, SPEECH_VOICE_LETTER_GAP_MS)) return;
-        if(speech_voice_path(name, speech->path, sizeof(speech->path)) > 0 &&
+        if(speech_voice_path(speech->set, name, speech->path, sizeof(speech->path)) > 0 &&
            speech_play_clip(speech, speech->path)) {
             speech->voice.clip_words++;
             continue;
@@ -394,7 +468,7 @@ static void speech_speak_words(Speech* speech, bool spell) {
             // Asked for: its letters count as clips, the word is neither a fallback nor missing
             speech_spell_word(speech, word.word);
         } else if(
-            speech_voice_path(word.word, speech->path, sizeof(speech->path)) > 0 &&
+            speech_voice_path(speech->set, word.word, speech->path, sizeof(speech->path)) > 0 &&
             speech_play_clip(speech, speech->path)) {
             speech->voice.clip_words++;
         } else {
@@ -406,14 +480,18 @@ static void speech_speak_words(Speech* speech, bool spell) {
 }
 
 /**
- * Append the words the last utterance lacked to the missing list on the card. When the file
- * cannot be opened the words stay in the log and a later utterance writes them.
+ * Append the words the last utterance lacked to the missing list of the set in use, its
+ * missing.txt. When the file cannot be opened the words stay in the log and a later utterance
+ * writes them.
  */
 static void speech_write_missing(Speech* speech) {
     size_t n = speech_voice_log_count(&speech->voice);
     if(n == 0) return;
+    if(!speech_voice_set_file(speech->set, "missing.txt", speech->path, sizeof(speech->path))) {
+        return;
+    }
     File* file = speech->voice_file;
-    bool opened = storage_file_open(file, SPEECH_VOICE_MISSING_PATH, FSAM_WRITE, FSOM_OPEN_APPEND);
+    bool opened = storage_file_open(file, speech->path, FSAM_WRITE, FSOM_OPEN_APPEND);
     if(opened) {
         for(size_t i = 0; i < n; i++) {
             const char* w = speech_voice_log_word(&speech->voice, i);
@@ -426,7 +504,8 @@ static void speech_write_missing(Speech* speech) {
 }
 
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
-    // Muted (sr voice off), or no vocabulary on the card: the item completes at once, without
+    speech_take_voice_set(speech);
+    // Muted (sr voice off), or no voice set on the card: the item completes at once, without
     // the speaker, a file or the missing list; the voice status counts it
     if(!speech->voice_enabled || !speech_voice_ready(speech)) {
         speech->muted++;
@@ -539,6 +618,8 @@ Speech* speech_alloc(void) {
     speech->voice_file = storage_file_alloc(speech->storage);
     speech_voice_state_init(&speech->voice);
     speech->voice_enabled = true;
+    // No set asked for and none in use (the memset): until the reader passes the saved one, the
+    // first set found is resolved at the first utterance
 
     speech->thread = furi_thread_alloc_ex("SpeechWorker", 3 * 1024, speech_worker, speech);
     furi_thread_set_priority(speech->thread, FuriThreadPriorityHigh);
@@ -650,7 +731,8 @@ void speech_set_voice_clips(Speech* speech, bool enabled) {
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     furi_check(speech && out);
     // The worker owns these counters and writes them one word at a time; 32 bit reads are
-    // atomic on this core, so the snapshot is consistent enough for a status line
+    // atomic on this core, so the snapshot is consistent enough for a status line. It writes the
+    // names one byte at a time, so a read while a set is resolved shows at worst a mixed name
     out->enabled = speech->voice_enabled;
     out->vocabulary = speech->vocabulary;
     out->clip_words = *(volatile uint32_t*)&speech->voice.clip_words;
@@ -661,4 +743,31 @@ void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     out->open_last_ms = *(volatile uint32_t*)&speech->open_last_ms;
     strncpy(out->settings, speech->voice_settings, sizeof(out->settings) - 1);
     out->settings[sizeof(out->settings) - 1] = '\0';
+    strncpy(out->set, speech->set, sizeof(out->set) - 1);
+    out->set[sizeof(out->set) - 1] = '\0';
+    strncpy(out->wanted, speech->wanted, sizeof(out->wanted) - 1);
+    out->wanted[sizeof(out->wanted) - 1] = '\0';
+}
+
+void speech_set_voice_set(Speech* speech, const char* set) {
+    furi_check(speech && set);
+    // The reader passes the saved name before every announcement, so an unchanged one costs a
+    // compare and nothing else. It is compared as far as it is kept: a name cut at 31
+    // characters is not taken for a new one every time
+    speech_lock(speech);
+    if(strncmp(speech->wanted_set, set, sizeof(speech->wanted_set) - 1) != 0) {
+        strlcpy(speech->wanted_set, set, sizeof(speech->wanted_set));
+        speech->set_changed = true;
+    }
+    speech_unlock(speech);
+}
+
+size_t
+    speech_voice_sets(Speech* speech, void (*fn)(const char* name, void* context), void* context) {
+    furi_check(speech && fn);
+    // A handle of its own: the worker's is busy with clips while it speaks
+    File* dir = storage_file_alloc(speech->storage);
+    size_t count = speech_voice_walk(dir, fn, context);
+    storage_file_free(dir);
+    return count;
 }

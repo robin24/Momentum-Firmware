@@ -51,6 +51,7 @@ MomentumSettings momentum_settings = {
     .sr_volume = 80, // %: the update boot and a fresh device speak at this level
     .sr_verbosity = 1, // Normal
     .sr_change_ms = SR_CHANGE_MS_DEFAULT, // a same-screen change is said at most once per 3 s
+    .sr_voice_set = "", // the first voice set found on the card
     .desktop_anims = false, // OFF: the home screen loads no animation
 };
 
@@ -130,6 +131,7 @@ static const struct {
     {setting_uint(sr_volume, 0, 100)},
     {setting_uint(sr_verbosity, 0, 2)},
     {setting_uint(sr_change_ms, SR_CHANGE_MS_MIN, SR_CHANGE_MS_MAX)},
+    {setting_str(sr_voice_set)},
     {setting_bool(desktop_anims)},
 };
 

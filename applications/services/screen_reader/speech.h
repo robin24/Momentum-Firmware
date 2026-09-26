@@ -65,14 +65,18 @@ void speech_set_volume(Speech* speech, uint8_t volume);
 typedef struct {
     bool enabled; /**< recorded clips are used when the vocabulary is present;
                        false means muted (sr voice off) */
-    bool vocabulary; /**< /ext/sr/voice was found on the card */
+    bool vocabulary; /**< a voice set under /ext/sr/voices was found on the card */
     uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
     uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */
-    uint32_t missing_words; /**< distinct words recorded in /ext/sr/missing.txt since boot */
+    uint32_t missing_words; /**< distinct words recorded in the sets' missing.txt since boot */
     uint32_t muted; /**< items completed silently since boot: the voice off, or no vocabulary */
     uint32_t open_max_ms; /**< longest clip open since boot, found or not */
     uint32_t open_last_ms; /**< the latest clip open */
-    char settings[64]; /**< first line of /ext/sr/voice/voice.txt, empty when absent */
+    char settings[64]; /**< first line of the set's voice.txt, empty when absent */
+    // 32 is SPEECH_VOICE_SET_MAX (speech_voice.h), a set name with its terminator; speech.c
+    // asserts that the two agree
+    char set[32]; /**< the set in use, empty when none was found */
+    char wanted[32]; /**< the set asked for, empty for the first found */
 } SpeechVoiceStats;
 
 /** Recorded voice on or off, from the next utterance on. Off mutes: a text item completes at
@@ -81,6 +85,19 @@ typedef struct {
 void speech_set_voice_clips(Speech* speech, bool enabled);
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
+
+/** Use the voice set of that name, a folder under /ext/sr/voices, from the next utterance on.
+ *  An empty name, or a name whose folder the card lacks, means the first set found in name
+ *  order; with no set at all the engine is silent, as without a card. Takes the mutex briefly;
+ *  callers are threads. The name is cut at 31 characters. */
+void speech_set_voice_set(Speech* speech, const char* set);
+
+/** The sets on the card: fn(name, context) for every folder under /ext/sr/voices, in the
+ *  order the card lists them, but for a hidden one (its name starts with a dot) and one whose
+ *  name is longer than 31 characters, which no setting holds; the engine never picks those
+ *  either. Returns the count. Any thread; opens its own directory handle. */
+size_t
+    speech_voice_sets(Speech* speech, void (*fn)(const char* name, void* context), void* context);
 
 /** True while something is queued or being spoken. */
 bool speech_is_busy(Speech* speech);

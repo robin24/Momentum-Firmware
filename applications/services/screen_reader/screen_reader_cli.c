@@ -1,5 +1,6 @@
 #include "screen_reader_cli.h"
 #include "speech_queue.h"
+#include "speech_voice.h"
 
 #include <furi.h>
 #include <furi_hal_rtc.h>
@@ -11,6 +12,11 @@
 #include <input/input.h>
 #include <momentum/settings.h>
 #include <storage/storage.h>
+
+// sr voice use saves a name that passed speech_voice_set_valid: the setting holds any such whole
+_Static_assert(
+    SR_VOICE_SET_LEN == SPEECH_VOICE_SET_MAX,
+    "the voice set setting must fit a set name");
 
 static const char* sr_layer_name(uint8_t layer) {
     switch(layer) {
@@ -96,7 +102,7 @@ static void sr_cli_usage(void) {
         SR_CHANGE_MS_MAX);
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
-        "  voice on|off|status  recorded word clips from the card; off mutes speech until on or a reboot\r\n");
+        "  voice on|off|status|list|use <set>  recorded word clips from the card; off mutes speech until on or a reboot; use picks the set (saved)\r\n");
     printf(
         "  chord up|down|ok|okhold|downhold|left|right  what Back plus that key does: screen,\r\n"
         "               status bar, focus, focus spelled, reader off or on (also while it is off),\r\n"
@@ -140,10 +146,16 @@ static void sr_cli_screen(ScreenReader* sr) {
 static void sr_cli_print_voice(ScreenReader* sr) {
     SpeechVoiceStats v;
     speech_get_voice_stats(screen_reader_get_speech(sr), &v);
+    // The set asked for is named too when it is not the one in use: its folder is not on the
+    // card (the engine took the first set found), or there is no set or no card at all
+    bool differs = v.wanted[0] != '\0' && strcmp(v.wanted, v.set) != 0;
     printf(
-        "voice: %s, vocabulary %s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, open max %lu ms, last %lu ms\r\n",
+        "voice: %s, vocabulary %s set %s%s%s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, open max %lu ms, last %lu ms\r\n",
         v.enabled ? "on" : "off",
         v.vocabulary ? "yes" : "no",
+        v.set[0] ? v.set : "none",
+        differs ? " wanted " : "",
+        differs ? v.wanted : "",
         v.settings[0] ? " " : "",
         v.settings,
         (unsigned long)v.clip_words,
@@ -152,6 +164,60 @@ static void sr_cli_print_voice(ScreenReader* sr) {
         (unsigned long)v.muted,
         (unsigned long)v.open_max_ms,
         (unsigned long)v.open_last_ms);
+}
+
+// A line of sr voice list: the set, and whether the engine speaks in it
+static void sr_cli_voice_list_one(const char* name, void* context) {
+    const char* in_use = context;
+    printf("%s%s\r\n", name, strcmp(name, in_use) == 0 ? " (in use)" : "");
+}
+
+// The sets on the card as the card lists them. The one marked in use is the one the engine
+// resolved at the first utterance after a card mount or a change of set; until that utterance
+// the one before it stays marked, or none
+static void sr_cli_voice_list(ScreenReader* sr) {
+    Speech* speech = screen_reader_get_speech(sr);
+    SpeechVoiceStats v;
+    speech_get_voice_stats(speech, &v);
+    if(speech_voice_sets(speech, sr_cli_voice_list_one, v.set) == 0) printf("none found\r\n");
+}
+
+// Whether the card holds the folder of that set, through a storage record of the call's own
+static bool sr_cli_voice_set_exists(const char* set) {
+    char path[SPEECH_VOICE_PATH_MAX];
+    if(!speech_voice_set_file(set, "", path, sizeof(path))) return false;
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    bool exists = storage_dir_exists(storage, path);
+    furi_record_close(RECORD_STORAGE);
+    return exists;
+}
+
+// sr voice use <set>: a set on the card, or auto for the first found (the setting emptied).
+// Saved, and passed to the engine at once, which speaks in it from the next utterance on
+static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
+    FuriString* name = furi_string_alloc();
+    do {
+        if(!args_read_string_and_trim(args, name)) {
+            printf("sr voice use <set>|auto\r\n");
+            break;
+        }
+        const char* set = furi_string_get_cstr(name);
+        if(strcmp(set, "auto") == 0) {
+            set = "";
+        } else if(!speech_voice_set_valid(set) || !sr_cli_voice_set_exists(set)) {
+            printf("no such voice set: %s\r\n", set);
+            break;
+        }
+        strlcpy(momentum_settings.sr_voice_set, set, sizeof(momentum_settings.sr_voice_set));
+        momentum_settings_save();
+        speech_set_voice_set(screen_reader_get_speech(sr), set);
+        if(set[0] != '\0') {
+            printf("voice set: %s\r\n", set);
+        } else {
+            printf("voice set: auto, the first found\r\n");
+        }
+    } while(false);
+    furi_string_free(name);
 }
 
 static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
@@ -165,8 +231,12 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
         printf("voice off: muted until sr voice on or a reboot\r\n");
     } else if(!has || furi_string_cmp_str(sub, "status") == 0) {
         sr_cli_print_voice(sr);
+    } else if(furi_string_cmp_str(sub, "list") == 0) {
+        sr_cli_voice_list(sr);
+    } else if(furi_string_cmp_str(sub, "use") == 0) {
+        sr_cli_voice_use(sr, args);
     } else {
-        printf("sr voice on|off|status\r\n");
+        printf("sr voice on|off|status|list|use <set>\r\n");
     }
     furi_string_free(sub);
 }

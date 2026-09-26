@@ -217,6 +217,13 @@ static void sr_push_volume(ScreenReader* sr) {
     speech_set_volume(sr->speech, (uint8_t)momentum_settings.sr_volume);
 }
 
+// The voice set as saved, pushed wherever the volume is: the settings app and sr voice use write
+// momentum_settings, and the engine takes a changed name from the next utterance on. An
+// unchanged one costs a string compare
+static void sr_push_voice_set(ScreenReader* sr) {
+    speech_set_voice_set(sr->speech, momentum_settings.sr_voice_set);
+}
+
 // Desktop thread, from desktop_lock and desktop_unlock. Only desktop_unlock publishes locked
 // false, and only from the locked state, so each such message is the step from locked to
 // unlocked (also when the lock happened before the reader subscribed). desktop_lock sets the RTC
@@ -304,6 +311,7 @@ static void sr_announce(ScreenReader* sr, const SrAnnouncement* a) {
     sr->stats.announcements++;
     if(momentum_settings.screen_reader) {
         sr_push_volume(sr);
+        sr_push_voice_set(sr);
         speech_say(sr->speech, a->text, a->interrupt, a->kind == SrAnnChange);
     }
     if(sr->watch_queue) furi_message_queue_put(sr->watch_queue, a, 0);
@@ -498,6 +506,7 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
     char* text = malloc(SR_DESCRIBE_TEXT_MAX);
     const SrScreen* screen = &sr->model.prev;
     sr_push_volume(sr);
+    sr_push_voice_set(sr);
     switch(command) {
     case SrChordReadAll:
         sr_read_all_text(screen, text, SR_DESCRIBE_TEXT_MAX);
@@ -591,6 +600,7 @@ static void sr_toggle(ScreenReader* sr) {
     if(momentum_settings.screen_reader) {
         screen_reader_set_enabled(sr, false);
         sr_push_volume(sr);
+        sr_push_voice_set(sr);
         speech_say(sr->speech, "Screen reader off", true, false);
         return;
     }
@@ -603,6 +613,7 @@ static void sr_toggle(ScreenReader* sr) {
     }
     if(text[n] == '\0') strlcpy(text, "Screen reader on", SR_DESCRIBE_TEXT_MAX);
     sr_push_volume(sr);
+    sr_push_voice_set(sr);
     speech_say_parts(sr->speech, text);
     free(text);
 }
@@ -679,6 +690,7 @@ int32_t screen_reader_srv(void* p) {
     sr_throttle_init(&sr->throttle);
     sr->speech = speech_alloc();
     speech_set_volume(sr->speech, (uint8_t)momentum_settings.sr_volume);
+    sr_push_voice_set(sr); // sr say speaks in it too, also while the reader is off
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);

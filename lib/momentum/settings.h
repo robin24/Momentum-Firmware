@@ -9,6 +9,9 @@
 
 #define ASSET_PACKS_NAME_LEN 32
 
+// Screen reader voice set: a folder name under /ext/sr/voices with its terminator
+#define SR_VOICE_SET_LEN 32
+
 // Screen reader change delay in milliseconds: a same-screen change is said at most once per delay
 #define SR_CHANGE_MS_MIN     500
 #define SR_CHANGE_MS_MAX     10000
@@ -113,6 +116,7 @@ typedef struct {
     uint32_t sr_volume;
     uint32_t sr_verbosity;
     uint32_t sr_change_ms;
+    char sr_voice_set[SR_VOICE_SET_LEN]; // the recorded voice set on the card, empty: the first found
     bool desktop_anims;
 } MomentumSettings;
 
