@@ -161,7 +161,7 @@ static void sr_cli_print_voice(ScreenReader* sr) {
         snprintf(state, sizeof(state), "off");
     }
     printf(
-        "voice: %s, vocabulary %s set %s%s%s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, open max %lu ms, last %lu ms\r\n",
+        "voice: %s, vocabulary %s set %s%s%s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, low memory %lu, open max %lu ms, last %lu ms\r\n",
         state,
         v.vocabulary ? "yes" : "no",
         v.set[0] ? v.set : "none",
@@ -173,6 +173,7 @@ static void sr_cli_print_voice(ScreenReader* sr) {
         (unsigned long)v.fallback_words,
         (unsigned long)v.missing_words,
         (unsigned long)v.muted,
+        (unsigned long)v.low_memory,
         (unsigned long)v.open_max_ms,
         (unsigned long)v.open_last_ms);
 }

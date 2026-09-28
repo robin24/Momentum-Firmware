@@ -18,6 +18,10 @@
 #define SPEECH_EVENT_TIMEOUT_MS   200
 #define SPEECH_BUS_POLL_MS        5
 #define SPEECH_FILE_CHUNK         512 /* bytes read from the card at a time */
+// Every clip opened takes about 0.7 KB of the heap for a moment (a file object with its own
+// sector buffer on the storage thread, paths and a node): below this largest free block an item
+// is not spoken, so an app near the heap's floor is not pushed over it by speech
+#define SPEECH_HEAP_MIN           4096
 #define SPEECH_FILE_RATE_MIN      8000
 #define SPEECH_FILE_RATE_MAX      32000
 
@@ -89,6 +93,7 @@ struct Speech {
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
     uint32_t open_last_ms;
     uint32_t muted; /* items completed silently: voice off, or no vocabulary on the card */
+    uint32_t low_memory; /* items completed silently: too little free memory for the clips */
 };
 
 static void speech_lock(Speech* speech) {
@@ -605,6 +610,13 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
         speech_unlock(speech);
         return;
     }
+    if(memmgr_heap_get_max_free_block() < SPEECH_HEAP_MIN) {
+        speech->low_memory++;
+        speech_lock(speech);
+        speech->stats.speaking = false;
+        speech_unlock(speech);
+        return;
+    }
     if(!speech_item_begin(speech, item)) return;
 
     // A spelled item keeps its own letters and digits; one without any is said instead
@@ -885,6 +897,7 @@ void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     out->fallback_words = *(volatile uint32_t*)&speech->voice.fallback_words;
     out->missing_words = *(volatile uint32_t*)&speech->voice.missing_words;
     out->muted = *(volatile uint32_t*)&speech->muted;
+    out->low_memory = *(volatile uint32_t*)&speech->low_memory;
     out->open_max_ms = *(volatile uint32_t*)&speech->open_max_ms;
     out->open_last_ms = *(volatile uint32_t*)&speech->open_last_ms;
     strncpy(out->settings, speech->voice_settings, sizeof(out->settings) - 1);

@@ -71,6 +71,7 @@ typedef struct {
     uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */
     uint32_t missing_words; /**< distinct words recorded in the sets' missing.txt since boot */
     uint32_t muted; /**< items completed silently since boot: the voice off, or no vocabulary */
+    uint32_t low_memory; /**< items completed silently since boot for too little free memory */
     uint32_t open_max_ms; /**< longest clip open since boot, found or not */
     uint32_t open_last_ms; /**< the latest clip open */
     char settings[64]; /**< first line of the set's voice.txt, empty when absent */
