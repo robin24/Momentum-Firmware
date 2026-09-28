@@ -26,6 +26,8 @@
 #endif
 #endif
 #ifndef SR_CHORDS_HAVE_INPUT
+#define INPUT_SEQUENCE_SOURCE_HARDWARE (0u)
+#define INPUT_SEQUENCE_SOURCE_SOFTWARE (1u)
 typedef enum {
     InputKeyUp,
     InputKeyDown,
@@ -77,6 +79,29 @@ void sr_chords_init(SrChords* s);
  *  event's time, is reserved: the machine keeps no time of its own and ignores it. */
 SrChordCommand sr_chords_feed(
     SrChords* s,
+    bool reader_on,
+    InputKey key,
+    InputType type,
+    uint32_t now_ms,
+    bool* drop,
+    bool* emit_long);
+
+/** The chord state of each source of events the filter sees: the keys, through the input
+ *  service, and the console's input send, which marks its events as made in software. Apart, a
+ *  console press whose release never comes (a scripted run cut off mid-chord) cannot turn the
+ *  keys into chords, and a console key cannot join a chord of the keys. */
+typedef struct {
+    SrChords keys;
+    SrChords console;
+} SrChordSources;
+
+void sr_chord_sources_init(SrChordSources* s);
+
+/** sr_chords_feed on the state of the event's source: sequence_source as in InputEvent,
+ *  INPUT_SEQUENCE_SOURCE_HARDWARE for the keys, anything else for the console. */
+SrChordCommand sr_chord_sources_feed(
+    SrChordSources* s,
+    uint8_t sequence_source,
     bool reader_on,
     InputKey key,
     InputType type,

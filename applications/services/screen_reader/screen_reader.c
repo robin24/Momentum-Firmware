@@ -76,7 +76,7 @@ struct ScreenReader {
 
     // Chords: the state belongs to the input filter. A command waits here for the service
     // thread, which takes it with an atomic exchange: the latest one wins, none runs twice
-    SrChords chords;
+    SrChordSources chords; // the keys' and the console's input send's apart
     uint8_t pending_command;
 
     // The desktop's lock state, for "Locked" and "Unlocked"; subscribed once the desktop record
@@ -198,8 +198,9 @@ void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
 static void sr_input_filter(const InputEvent* event, InputFilterResult* result, void* context) {
     ScreenReader* sr = context;
     bool drop = false, emit_long = false;
-    SrChordCommand command = sr_chords_feed(
+    SrChordCommand command = sr_chord_sources_feed(
         &sr->chords,
+        event->sequence_source,
         momentum_settings.screen_reader,
         event->key,
         event->type,
@@ -694,7 +695,7 @@ int32_t screen_reader_srv(void* p) {
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);
-    sr_chords_init(&sr->chords);
+    sr_chord_sources_init(&sr->chords);
     input_set_filter(sr_input_filter, sr);
 
     sr->gui = furi_record_open(RECORD_GUI);

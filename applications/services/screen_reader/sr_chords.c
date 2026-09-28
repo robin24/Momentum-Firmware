@@ -111,3 +111,21 @@ SrChordCommand sr_chords_feed(
     }
     return SrChordNone;
 }
+
+void sr_chord_sources_init(SrChordSources* s) {
+    sr_chords_init(&s->keys);
+    sr_chords_init(&s->console);
+}
+
+SrChordCommand sr_chord_sources_feed(
+    SrChordSources* s,
+    uint8_t sequence_source,
+    bool reader_on,
+    InputKey key,
+    InputType type,
+    uint32_t now_ms,
+    bool* drop,
+    bool* emit_long) {
+    SrChords* state = sequence_source == INPUT_SEQUENCE_SOURCE_HARDWARE ? &s->keys : &s->console;
+    return sr_chords_feed(state, reader_on, key, type, now_ms, drop, emit_long);
+}
