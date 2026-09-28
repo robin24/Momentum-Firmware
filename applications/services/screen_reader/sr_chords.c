@@ -6,6 +6,7 @@ void sr_chords_init(SrChords* s) {
     s->long_pending = false;
     s->chord_key = -1;
     s->key_long_seen = false;
+    s->key_orphaned = false;
 }
 
 static SrChordCommand command_for(InputKey key) {
@@ -33,8 +34,9 @@ static SrChordCommand split_command(SrChords* s, bool reader_on, InputKey key, I
         command = key == InputKeyOk ? SrChordSpell : SrChordToggleReader;
     }
     if(!reader_on && command != SrChordToggleReader) return SrChordNone;
-    if(command != SrChordNone && s->back_down) {
-        // A chord ran during this Back hold: Back's own Short and held-back Long go with it
+    if(command != SrChordNone && s->back_down && !s->key_orphaned) {
+        // A chord ran during this Back hold: Back's own Short and held-back Long go with it. A
+        // hold that began after the chord key's own is not its chord
         s->chord_used = true;
         s->long_pending = false;
     }
@@ -64,6 +66,7 @@ SrChordCommand sr_chords_feed(
         if(type == InputTypeRelease) {
             s->chord_key = -1;
             s->key_long_seen = false;
+            s->key_orphaned = false;
         }
         return command;
     }
@@ -86,7 +89,10 @@ SrChordCommand sr_chords_feed(
             *drop = s->chord_used;
             return SrChordNone;
         case InputTypeRelease:
-            *emit_long = s->long_pending && !s->chord_used;
+            // Not while a chord key is held: with the reader off, Down held back may still make
+            // the chord, which drops Back's Long (with the reader on a chord has run already)
+            *emit_long = s->long_pending && !s->chord_used && s->chord_key < 0;
+            if(s->chord_key >= 0) s->key_orphaned = true;
             s->back_down = false;
             s->chord_used = false;
             s->long_pending = false;
@@ -103,6 +109,7 @@ SrChordCommand sr_chords_feed(
        (reader_on || key == InputKeyDown)) {
         s->chord_key = (int8_t)key;
         s->key_long_seen = false;
+        s->key_orphaned = false;
         *drop = true;
         if(!reader_on) return SrChordNone;
         s->chord_used = true;

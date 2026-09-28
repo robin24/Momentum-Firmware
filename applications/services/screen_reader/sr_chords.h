@@ -12,7 +12,10 @@
  * Back is held is held back in both, since only its
  * Short or its Long tells which chord it is; with the reader off a short one is lost. With the
  * reader on the chord begins at Down's Press, off only at Down's Long: a Short of Back's between
- * the two, Back let go first, is dropped with the reader on and passes with it off.
+ * the two, Back let go first, is dropped with the reader on and passes with it off. Back's Long,
+ * which waits for the release, is dropped when Back is let go while Down is held back, as the
+ * chord may still come. A chord key held on past its Back hold still names its command at its
+ * Short or Long, but a new hold of Back meanwhile is not its chord and keeps its own events.
  */
 #pragma once
 
@@ -69,6 +72,8 @@ typedef struct {
     int8_t chord_key; /**< key whose events are swallowed until its release, -1 for none */
     bool key_long_seen; /**< the chord key's Long ran its command (OK: Spell, Down: ToggleReader),
                              so its Short must not run the short one (Repeat, Status) */
+    bool key_orphaned; /**< the Back hold the chord key began in has ended: its command still
+                            runs, but a later hold is no chord of its */
 } SrChords;
 
 void sr_chords_init(SrChords* s);
