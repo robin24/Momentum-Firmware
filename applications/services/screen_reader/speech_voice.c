@@ -56,18 +56,6 @@ uint32_t speech_voice_hash(const char* word) {
     return h;
 }
 
-bool speech_voice_set_valid(const char* name) {
-    size_t n = strlen(name);
-    if(n == 0 || n > SPEECH_VOICE_SET_MAX - 1) return false;
-    if(strcmp(name, "auto") == 0) return false; // reserved for the first set found
-    for(size_t i = 0; i < n; i++) {
-        char c = name[i];
-        bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
-        if(!ok) return false;
-    }
-    return true;
-}
-
 bool speech_voice_set_listable(const char* name) {
     size_t n = strlen(name);
     if(n == 0 || n > SPEECH_VOICE_SET_MAX - 1 || name[0] == '.') return false;

@@ -16,7 +16,8 @@
 // The longest timed mute, sr voice off with seconds: an hour
 #define SR_VOICE_OFF_MAX_S 3600
 
-// sr voice use saves a name that passed speech_voice_set_valid: the setting holds any such whole
+// sr voice use saves a name the engine lists (speech_voice_set_listable): the setting holds any
+// such whole
 _Static_assert(
     SR_VOICE_SET_LEN == SPEECH_VOICE_SET_MAX,
     "the voice set setting must fit a set name");
@@ -204,20 +205,21 @@ static bool sr_cli_voice_set_exists(const char* set) {
     return exists;
 }
 
-// sr voice use <set>: a set on the card, or auto for the first found (the setting emptied).
+// sr voice use <set>: a set on the card, any name that sr voice list shows and the settings app
+// offers, in quotes when it has a space; or auto for the first found (the setting emptied).
 // Saved, and passed to the engine at once, which resolves the set afresh at the next utterance,
 // also for the name already in use: a set synced again, or back after a fallback, is taken
 static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
     FuriString* name = furi_string_alloc();
     do {
-        if(!args_read_string_and_trim(args, name)) {
+        if(!args_read_probably_quoted_string_and_trim(args, name)) {
             printf("sr voice use <set>|auto\r\n");
             break;
         }
         const char* set = furi_string_get_cstr(name);
         if(strcmp(set, "auto") == 0) {
             set = "";
-        } else if(!speech_voice_set_valid(set) || !sr_cli_voice_set_exists(set)) {
+        } else if(!speech_voice_set_listable(set) || !sr_cli_voice_set_exists(set)) {
             printf("no such voice set: %s\r\n", set);
             break;
         }
