@@ -7,6 +7,9 @@
 // baseline at y=60, so only y=61 and below is a button by geometry.
 #define SR_BUTTON_ROW_Y    61
 #define SR_TITLE_MAX_Y     26
+// On an on-screen keyboard the prompt is the top line (y 8 or 9, in the secondary font); the field
+// below it (y 22 to 25) is read as the value, never as the title
+#define SR_PROMPT_MAX_Y    12
 #define SR_SPONTANEOUS_MAX 80
 
 static void sr_copy(char* out, size_t out_size, const char* in) {
@@ -167,10 +170,22 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
 
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* c = &screen->rows[i];
-        if(c->kind == SrRowNormal && !c->note && c->font == SrFontPrimary &&
-           c->y <= SR_TITLE_MAX_Y) {
+        if(c->kind == SrRowFocus && c->font == SrFontKeyboard) screen->on_keyboard = true;
+        if(screen->title_row < 0 && c->kind == SrRowNormal && !c->note &&
+           c->font == SrFontPrimary && c->y <= SR_TITLE_MAX_Y) {
             screen->title_row = (int8_t)i;
-            break;
+        }
+    }
+    // The keyboards (text_input, byte_input, number_input) draw their prompt in the secondary
+    // font: on a keyboard without a title in the primary font, the top line is the title
+    if(screen->on_keyboard && screen->title_row < 0) {
+        for(uint8_t i = 0; i < screen->row_count; i++) {
+            const SrRow* c = &screen->rows[i];
+            if(c->kind == SrRowNormal && !c->note && c->font != SrFontKeyboard &&
+               c->y <= SR_PROMPT_MAX_Y) {
+                screen->title_row = (int8_t)i;
+                break;
+            }
         }
     }
 }
@@ -359,6 +374,14 @@ static void
     sr_screen_focus_text(s, focus, sizeof(focus));
     if(s->title_row >= 0) sr_append(out, out_size, sr_title_text(s));
     if(focus[0] != '\0') {
+        // An on-screen keyboard: the field, and any other line that is not a key, before the key
+        for(uint8_t i = 0; s->on_keyboard && i < s->row_count; i++) {
+            const SrRow* row = &s->rows[i];
+            if(row->kind != SrRowNormal || row->font == SrFontKeyboard) continue;
+            if((int8_t)i == s->title_row) continue;
+            if(out[0] != '\0') sr_append(out, out_size, ". ");
+            sr_append(out, out_size, row->text);
+        }
         if(out[0] != '\0') sr_append(out, out_size, ". ");
         sr_append(out, out_size, focus);
         if(model->verbosity >= 2) sr_append_focus_position(s, out, out_size);
