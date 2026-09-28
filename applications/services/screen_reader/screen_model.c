@@ -400,12 +400,14 @@ static void
 static bool
     sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* out, size_t out_size) {
     if(!cur->has_keyboard || !prev->has_keyboard) return false;
+    // A field, never a row of keys: a key row gains a character when the selection leaves one
+    // of its keys (the number input's "5678" becomes "56789" once the 9 is not selected)
     for(uint8_t i = 0; i < cur->row_count; i++) {
         const SrRow* now = &cur->rows[i];
-        if(now->kind != SrRowNormal) continue;
+        if(now->kind != SrRowNormal || now->font == SrFontKeyboard) continue;
         for(uint8_t j = 0; j < prev->row_count; j++) {
             const SrRow* was = &prev->rows[j];
-            if(was->kind != SrRowNormal) continue;
+            if(was->kind != SrRowNormal || was->font == SrFontKeyboard) continue;
             if((now->y - was->y) > SR_ROW_Y_TOLERANCE || (was->y - now->y) > SR_ROW_Y_TOLERANCE)
                 continue;
             size_t ln = strlen(now->text), lw = strlen(was->text);
