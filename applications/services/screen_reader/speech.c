@@ -676,15 +676,23 @@ static int32_t speech_worker(void* context) {
     speech->thread_id = furi_thread_get_current_id();
     SpeechItem* item = malloc(sizeof(SpeechItem));
 
+    uint32_t idle_since = furi_get_tick(); // the end of the last item
     while(true) {
-        uint32_t timeout = furi_hal_speaker_is_mine() ? SPEECH_IDLE_RELEASE_MS : FuriWaitForever;
+        // Quiet for a while since the last item: hand the speaker back so beeps and other apps
+        // can use it. Counted from that end, not from the latest wake-up: every key press stops
+        // speech and so wakes this loop, and quick keys would keep the speaker held
+        uint32_t timeout = FuriWaitForever;
+        if(furi_hal_speaker_is_mine()) {
+            uint32_t idle = furi_get_tick() - idle_since;
+            if(idle >= SPEECH_IDLE_RELEASE_MS) {
+                speech_drop_speaker(speech);
+                continue;
+            }
+            timeout = SPEECH_IDLE_RELEASE_MS - idle;
+        }
         uint32_t flags =
             furi_thread_flags_wait(SPEECH_FLAG_WORK | SPEECH_FLAG_STOP, FuriFlagWaitAny, timeout);
-        if(flags & FuriFlagError) {
-            // Quiet for a while: hand the speaker back so beeps and other apps can use it
-            speech_drop_speaker(speech);
-            continue;
-        }
+        if(flags & FuriFlagError) continue;
         // A stop request has already retired the queue on the requesting thread; its flag
         // only wakes this loop, which then finds nothing or what was pushed after the request
         while(speech_pop(speech, item)) {
@@ -693,6 +701,7 @@ static int32_t speech_worker(void* context) {
             } else {
                 speech_speak_item(speech, item);
             }
+            idle_since = furi_get_tick();
         }
     }
     return 0;
