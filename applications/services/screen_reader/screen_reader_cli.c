@@ -492,9 +492,15 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
     furi_string_free(cmd);
 }
 
+// Each run of the command gets a thread with this stack, for the whole of an sr watch session.
+// The deepest path by GCC's call graph, a number printed through the console pipe, needs about
+// 1.3 KB, and about 1.6 KB with an interrupt's frame; the default would be 4 KB.
+#define SR_CLI_STACK_SIZE 2048
+
 void screen_reader_cli_register(ScreenReader* sr) {
     CliRegistry* registry = furi_record_open(RECORD_CLI);
-    cli_registry_add_command(registry, "sr", CliCommandFlagParallelSafe, sr_cli_execute, sr);
+    cli_registry_add_command_ex(
+        registry, "sr", CliCommandFlagParallelSafe, sr_cli_execute, sr, SR_CLI_STACK_SIZE);
     furi_record_close(RECORD_CLI);
 }
 
