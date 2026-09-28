@@ -777,7 +777,10 @@ static void speech_push(
     }
     speech->stats.queue_dropped = speech->queue.dropped;
     speech_unlock(speech);
-    furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+    // An interrupting push also wakes a DMA wait, as a stop does, so what it supersedes ends at
+    // once instead of at the next played half, up to 82 ms later
+    furi_thread_flags_set(
+        speech->thread_id, interrupt ? SPEECH_FLAG_WORK | SPEECH_FLAG_STOP : SPEECH_FLAG_WORK);
 }
 
 void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable) {

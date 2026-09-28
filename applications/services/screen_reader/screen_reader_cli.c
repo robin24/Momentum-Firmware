@@ -359,6 +359,10 @@ static void sr_cli_play(ScreenReader* sr, FuriString* args) {
             printf("play what? sr play <path> [rate]\r\n");
             break;
         }
+        if(furi_string_size(path) >= SPEECH_ITEM_TEXT_MAX) {
+            printf("the path is too long: at most %d characters\r\n", SPEECH_ITEM_TEXT_MAX - 1);
+            break;
+        }
         int rate = 16000;
         if(furi_string_size(args) > 0 &&
            (!args_read_int_and_trim(args, &rate) || rate < 8000 || rate > 32000)) {
