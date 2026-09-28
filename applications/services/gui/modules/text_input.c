@@ -279,6 +279,28 @@ static void text_input_backspace_cb(TextInputModel* model) {
     }
 }
 
+/** In the cursor mode no key is selected: the screen reader's focus is then the cursor, said by
+ *  where it is. In the keyboard font, as the keys whose place it takes. Nothing is drawn */
+static void text_input_tap_cursor(Canvas* canvas, const char* text, size_t cursor_pos) {
+    size_t length = text ? strlen(text) : 0;
+    char note[48];
+    if(cursor_pos == 0 || cursor_pos > length) {
+        snprintf(note, sizeof(note), "Cursor at the start, 0 of %u", (unsigned)length);
+    } else {
+        char name[8] = {text[cursor_pos - 1], '\0'};
+        if(name[0] == ' ') strlcpy(name, "space", sizeof(name));
+        snprintf(
+            note,
+            sizeof(note),
+            "Cursor after %s, %u of %u",
+            name,
+            (unsigned)cursor_pos,
+            (unsigned)length);
+    }
+    canvas_tap_hint_focus(canvas, 0, 0);
+    canvas_tap_note(canvas, 4, 22, note);
+}
+
 static void text_input_view_draw_callback(Canvas* canvas, void* _model) {
     TextInputModel* model = _model;
     uint8_t text_length = model->text_buffer ? strlen(model->text_buffer) : 0;
@@ -331,9 +353,12 @@ static void text_input_view_draw_callback(Canvas* canvas, void* _model) {
         strlcat(str, "...", sizeof(buf) - (str - buf));
     }
 
+    // The field may show only the text's tail after "...": the screen reader reads the text whole
+    canvas_tap_hint_full_text(canvas, model->text_buffer, false);
     canvas_draw_str(canvas, start_pos, 22, str);
 
     canvas_set_font(canvas, FontKeyboard);
+    if(model->cursor_select) text_input_tap_cursor(canvas, model->text_buffer, cursor_pos);
 
     bool uppercase = model->clear_default_text || text_length == 0;
     bool symbols = model->selected_keyboard == symbol_keyboard.keyboard_index;

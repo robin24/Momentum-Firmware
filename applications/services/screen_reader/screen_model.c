@@ -347,6 +347,15 @@ static bool sr_screen_has_rows(const SrScreen* screen) {
     return false;
 }
 
+static bool sr_same_ignoring_case(const char* a, const char* b) {
+    for(; *a && *b; a++, b++) {
+        char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a - 'A' + 'a') : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? (char)(*b - 'A' + 'a') : *b;
+        if(ca != cb) return false;
+    }
+    return *a == *b;
+}
+
 static const char* sr_title_text(const SrScreen* screen) {
     return screen->title_row >= 0 ? screen->rows[screen->title_row].text : "";
 }
@@ -356,11 +365,14 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
     if(prev->has_content != cur->has_content) return true;
     if(strcmp(sr_title_text(prev), sr_title_text(cur)) != 0) return true;
     // Fewer than half of the previous rows still present, ignoring their roles: a list
-    // that scrolled by one keeps most rows, a new screen keeps almost none.
+    // that scrolled by one keeps most rows, a new screen keeps almost none. On a keyboard the
+    // rows of keys do not count: they change case when the field empties or fills
+    bool keyboard = prev->on_keyboard && cur->on_keyboard;
     unsigned total = 0, kept = 0;
     for(uint8_t i = 0; i < prev->row_count; i++) {
         const SrRow* row = &prev->rows[i];
         if(row->kind == SrRowStatus) continue;
+        if(keyboard && row->font == SrFontKeyboard) continue;
         total++;
         if(sr_screen_has_text(cur, row->text)) kept++;
     }
@@ -397,6 +409,44 @@ static void
     if(s->overflow) sr_append(out, out_size, ", and more");
 }
 
+/** A field's row, not a key's: normal text outside the keyboard font */
+static bool sr_row_is_field(const SrRow* row) {
+    return row->kind == SrRowNormal && row->font != SrFontKeyboard;
+}
+
+/** The field row of screen s on the baseline of row, or NULL */
+static const SrRow* sr_field_row_at(const SrScreen* s, const SrRow* row) {
+    for(uint8_t i = 0; i < s->row_count; i++) {
+        const SrRow* r = &s->rows[i];
+        if(!sr_row_is_field(r)) continue;
+        if((r->y - row->y) > SR_ROW_Y_TOLERANCE || (row->y - r->y) > SR_ROW_Y_TOLERANCE) continue;
+        return r;
+    }
+    return NULL;
+}
+
+/** One character more or less in a field: now grew from was by the character written to out, or
+ *  lost its last one ("deleted"). An empty field draws no row, so a row missing on one side is
+ *  empty text: the first character typed into an empty field, or its last one deleted. */
+static bool sr_typed_in(const char* now, const char* was, char* out, size_t out_size) {
+    size_t ln = strlen(now), lw = strlen(was);
+    if(ln == lw + 1 && strncmp(now, was, lw) == 0) {
+        char c = now[lw];
+        if(c == ' ') {
+            sr_copy(out, out_size, "space");
+        } else {
+            out[0] = c;
+            out[1] = '\0';
+        }
+        return true;
+    }
+    if(lw == ln + 1 && strncmp(now, was, ln) == 0) {
+        sr_copy(out, out_size, "deleted");
+        return true;
+    }
+    return false;
+}
+
 static bool
     sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* out, size_t out_size) {
     if(!cur->has_keyboard || !prev->has_keyboard) return false;
@@ -404,28 +454,15 @@ static bool
     // of its keys (the number input's "5678" becomes "56789" once the 9 is not selected)
     for(uint8_t i = 0; i < cur->row_count; i++) {
         const SrRow* now = &cur->rows[i];
-        if(now->kind != SrRowNormal || now->font == SrFontKeyboard) continue;
-        for(uint8_t j = 0; j < prev->row_count; j++) {
-            const SrRow* was = &prev->rows[j];
-            if(was->kind != SrRowNormal || was->font == SrFontKeyboard) continue;
-            if((now->y - was->y) > SR_ROW_Y_TOLERANCE || (was->y - now->y) > SR_ROW_Y_TOLERANCE)
-                continue;
-            size_t ln = strlen(now->text), lw = strlen(was->text);
-            if(ln == lw + 1 && strncmp(now->text, was->text, lw) == 0) {
-                char c = now->text[lw];
-                if(c == ' ') {
-                    sr_copy(out, out_size, "space");
-                } else {
-                    out[0] = c;
-                    out[1] = '\0';
-                }
-                return true;
-            }
-            if(lw == ln + 1 && strncmp(now->text, was->text, ln) == 0) {
-                sr_copy(out, out_size, "deleted");
-                return true;
-            }
-        }
+        if(!sr_row_is_field(now)) continue;
+        const SrRow* was = sr_field_row_at(prev, now);
+        if(sr_typed_in(now->text, was ? was->text : "", out, out_size)) return true;
+    }
+    // A field whose last character was deleted: its row is gone
+    for(uint8_t j = 0; j < prev->row_count; j++) {
+        const SrRow* was = &prev->rows[j];
+        if(!sr_row_is_field(was) || sr_field_row_at(cur, was)) continue;
+        if(sr_typed_in("", was->text, out, out_size)) return true;
     }
     return false;
 }
@@ -469,7 +506,12 @@ size_t sr_model_process(
         char focus_was[SR_ANN_TEXT_MAX];
         sr_screen_focus_text(cur, focus_now, sizeof(focus_now));
         sr_screen_focus_text(&model->prev, focus_was, sizeof(focus_was));
-        if(focus_now[0] != '\0' && strcmp(focus_now, focus_was) != 0) {
+        // On a keyboard a key is the same key in either case: the keys change case when the
+        // field empties or fills, and the character typed is the news then
+        bool same_focus = strcmp(focus_now, focus_was) == 0 ||
+                          (cur->on_keyboard && model->prev.on_keyboard &&
+                           sr_same_ignoring_case(focus_now, focus_was));
+        if(focus_now[0] != '\0' && !same_focus) {
             sr_copy(text, sizeof(text), focus_now);
             if(model->verbosity >= 2) sr_append_focus_position(cur, text, sizeof(text));
             sr_emit(out, out_max, &n, SrAnnFocus, true, text);
