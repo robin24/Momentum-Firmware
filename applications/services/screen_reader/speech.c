@@ -62,6 +62,7 @@ struct Speech {
     // Worker thread only
     SpeechPcm pcm;
     uint8_t ring[SPEECH_RING_SIZE];
+    uint8_t ring_silence; /* the ring's silence at this item's volume; set before the DMA runs */
     uint8_t fill_half;
     uint16_t fill_index;
     bool running;
@@ -99,6 +100,10 @@ static void speech_unlock(Speech* speech) {
 // Interrupt context
 static void speech_dma_event(bool second_half, void* context) {
     Speech* speech = context;
+    // The half just played is silenced before the worker hears of it: a worker late to refill
+    // it (a slow open, a busy card) then leaves silence where the DMA would play the old audio
+    // again, and a blocked one loops silence. About 20 us every 82 ms
+    memset(&speech->ring[second_half ? SPEECH_HALF : 0], speech->ring_silence, SPEECH_HALF);
     furi_thread_flags_set(speech->thread_id, second_half ? SPEECH_FLAG_HALF1 : SPEECH_FLAG_HALF0);
 }
 
@@ -271,7 +276,8 @@ static bool speech_item_begin(Speech* speech, const SpeechItem* item) {
         speech->lut_volume = volume;
     }
     speech_pcm_reset(&speech->pcm);
-    memset(speech->ring, speech_pcm_silence(&speech->pcm), SPEECH_RING_SIZE);
+    speech->ring_silence = speech_pcm_silence(&speech->pcm);
+    memset(speech->ring, speech->ring_silence, SPEECH_RING_SIZE);
 
     speech_lock(speech);
     speech->stats.utterances++;
