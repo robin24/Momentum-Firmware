@@ -6,20 +6,23 @@
 #include <stm32wbxx_ll_tim.h>
 
 #define SPEECH_TIMER       TIM16
-#define SPEECH_DMA         DMA2
-#define SPEECH_DMA_CHANNEL LL_DMA_CHANNEL_4
+// DMA1 channel 3, which nothing else in the firmware or in the apps built with it uses. DMA2
+// channel 4, the one before, is the external CC1101 radio's for its asynchronous transmit, and
+// speech during such a transmit garbled both
+#define SPEECH_DMA         DMA1
+#define SPEECH_DMA_CHANNEL LL_DMA_CHANNEL_3
 
 static SpeechHwEvent speech_hw_callback;
 static void* speech_hw_context;
 
 static void speech_hw_dma_isr(void* context) {
     UNUSED(context);
-    if(LL_DMA_IsActiveFlag_HT4(SPEECH_DMA)) {
-        LL_DMA_ClearFlag_HT4(SPEECH_DMA);
+    if(LL_DMA_IsActiveFlag_HT3(SPEECH_DMA)) {
+        LL_DMA_ClearFlag_HT3(SPEECH_DMA);
         speech_hw_callback(false, speech_hw_context);
     }
-    if(LL_DMA_IsActiveFlag_TC4(SPEECH_DMA)) {
-        LL_DMA_ClearFlag_TC4(SPEECH_DMA);
+    if(LL_DMA_IsActiveFlag_TC3(SPEECH_DMA)) {
+        LL_DMA_ClearFlag_TC3(SPEECH_DMA);
         speech_hw_callback(true, speech_hw_context);
     }
 }
@@ -62,11 +65,11 @@ void speech_hw_start(uint8_t* buffer, size_t size, SpeechHwEvent callback, void*
     LL_DMA_SetMemoryIncMode(SPEECH_DMA, SPEECH_DMA_CHANNEL, LL_DMA_MEMORY_INCREMENT);
     LL_DMA_SetPeriphSize(SPEECH_DMA, SPEECH_DMA_CHANNEL, LL_DMA_PDATAALIGN_HALFWORD);
     LL_DMA_SetMemorySize(SPEECH_DMA, SPEECH_DMA_CHANNEL, LL_DMA_MDATAALIGN_BYTE);
-    LL_DMA_ClearFlag_HT4(SPEECH_DMA);
-    LL_DMA_ClearFlag_TC4(SPEECH_DMA);
+    LL_DMA_ClearFlag_HT3(SPEECH_DMA);
+    LL_DMA_ClearFlag_TC3(SPEECH_DMA);
     LL_DMA_EnableIT_HT(SPEECH_DMA, SPEECH_DMA_CHANNEL);
     LL_DMA_EnableIT_TC(SPEECH_DMA, SPEECH_DMA_CHANNEL);
-    furi_hal_interrupt_set_isr(FuriHalInterruptIdDma2Ch4, speech_hw_dma_isr, NULL);
+    furi_hal_interrupt_set_isr(FuriHalInterruptIdDma1Ch3, speech_hw_dma_isr, NULL);
     LL_DMA_EnableChannel(SPEECH_DMA, SPEECH_DMA_CHANNEL);
 
     LL_TIM_EnableDMAReq_UPDATE(SPEECH_TIMER);
@@ -79,7 +82,7 @@ void speech_hw_stop(void) {
     LL_DMA_DisableChannel(SPEECH_DMA, SPEECH_DMA_CHANNEL);
     LL_DMA_DisableIT_HT(SPEECH_DMA, SPEECH_DMA_CHANNEL);
     LL_DMA_DisableIT_TC(SPEECH_DMA, SPEECH_DMA_CHANNEL);
-    furi_hal_interrupt_set_isr(FuriHalInterruptIdDma2Ch4, NULL, NULL);
+    furi_hal_interrupt_set_isr(FuriHalInterruptIdDma1Ch3, NULL, NULL);
     LL_TIM_DisableAllOutputs(SPEECH_TIMER);
     LL_TIM_DisableCounter(SPEECH_TIMER);
 }
