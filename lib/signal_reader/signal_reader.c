@@ -10,6 +10,7 @@
 #include <stm32wbxx_ll_exti.h>
 
 #include <furi_hal_bus.h>
+#include <momentum/momentum.h>
 
 #define SIGNAL_READER_DMA DMA2
 
@@ -48,7 +49,7 @@ struct SignalReader {
     SignalReaderCallback callback;
     void* context;
 
-    bool first_start_done; /**< the first start after alloc waited for the screen reader */
+    bool speaker_held; /**< the speaker, the timer's owner token, from the first start to free */
 };
 
 #define GPIO_PIN_MAP(pin, prefix)               \
@@ -82,7 +83,7 @@ SignalReader* signal_reader_alloc(const GpioPin* gpio_pin, uint32_t size) {
     instance->bitstream_buffer = malloc(size);
 
     instance->event.data = &instance->event_data;
-    instance->first_start_done = false;
+    instance->speaker_held = false;
 
     return instance;
 }
@@ -91,6 +92,10 @@ void signal_reader_free(SignalReader* instance) {
     furi_check(instance);
     furi_check(instance->gpio_buffer);
     furi_check(instance->bitstream_buffer);
+
+    // Returns the speaker taken at the first start. The release checks that this is the thread
+    // that took it: the NFC worker, which starts the reader and frees it at the listener's end
+    if(instance->speaker_held) furi_hal_speaker_release();
 
     free(instance->gpio_buffer);
     free(instance->bitstream_buffer);
@@ -197,29 +202,30 @@ void signal_reader_start(SignalReader* instance, SignalReaderCallback callback, 
     // EXTI delay compensation
     instance->tim_cnt_compensation = 9;
 
-    // The first start after alloc is the start of an emulation, whose screen the screen reader
-    // announces right away: give it 400 ms to take the speaker for that announcement. The acquire
-    // below then waits until the announcement is played out; later starts do not wait
-    if(!instance->first_start_done) {
-        instance->first_start_done = true;
-        furi_delay_ms(400);
-    }
-
     // TIM16 is shared with the speaker, and the speaker mutex is its single owner token:
     // acquiring it enables the timer and parks the speaker pin on the timer's alternate
     // function; the compare mode below is frozen and the main output is never enabled, so the
     // speaker stays silent. Speech and beeps wait or skip while the listener holds it; enabling
     // the bus directly would furi_check against a speaker user that already enabled it.
-    furi_check(furi_hal_speaker_acquire(FuriWaitForever));
+    // The mutex is taken at the first start and kept until free: a start per frame that took it
+    // again let speech take the speaker between two frames and hold up the emulation.
+    if(!instance->speaker_held) {
+        // The first start is the start of an emulation, whose screen the screen reader
+        // announces right away: with the reader on, give it 400 ms to take the speaker for that
+        // announcement. The acquire below then waits until the announcement is played out
+        if(momentum_settings.screen_reader) furi_delay_ms(400);
+        furi_check(furi_hal_speaker_acquire(FuriWaitForever));
+        instance->speaker_held = true;
+        // The acquire put the speaker pin on the timer; the listener drives no output, so keep
+        // the pin quiet for the whole emulation (the release re-initialises the pin itself)
+        furi_hal_gpio_init(&gpio_speaker, GpioModeAnalog, GpioPullDown, GpioSpeedLow);
+    }
 
-    // Read CR1 only now that the timer is ours: the bus enable in the acquire has just released
-    // the peripheral reset, so this is the reset value and not a live register of another user
+    // Read CR1 only now that the timer is ours and in its reset state, from the bus enable in
+    // the acquire or the reset in the last stop: the reset value, not a live register of another
+    // user
     instance->cnt_en = SIGNAL_READER_CAPTURE_TIM->CR1;
     instance->cnt_en |= TIM_CR1_CEN;
-
-    // The acquire put the speaker pin on the timer; the listener drives no output, so keep the
-    // pin quiet for the whole emulation (the release re-initialises the pin itself)
-    furi_hal_gpio_init(&gpio_speaker, GpioModeAnalog, GpioPullDown, GpioSpeedLow);
 
     // Capture timer config
     LL_TIM_SetPrescaler(SIGNAL_READER_CAPTURE_TIM, 0);
@@ -341,6 +347,7 @@ void signal_reader_stop(SignalReader* instance) {
     // Deinit DMA Trigger timer
     LL_DMA_DeInit(SIGNAL_READER_DMA_TRIGGER_DEF);
 
-    // Stops the timer, disables the bus (which resets the peripheral) and returns the speaker
-    furi_hal_speaker_release();
+    // Stops the timer and puts it back in its reset state for the next start, as the bus disable
+    // here did before the speaker mutex; the speaker itself stays held until signal_reader_free
+    furi_hal_bus_reset(FuriHalBusTIM16);
 }
