@@ -190,7 +190,8 @@ static DialogMessageButton about_screen_fw_version(DialogsApp* dialogs, DialogMe
             // Not a tag but not dev branch, show custom branch
             furi_string_cat(buffer, version_get_gitbranch(ver));
         } else {
-            furi_string_cat(buffer, "momentum-fw.dev");
+            // Sonar: a tagged build, a release, names its project, not Momentum's website
+            furi_string_cat(buffer, "flipper-access");
         }
     }
 
