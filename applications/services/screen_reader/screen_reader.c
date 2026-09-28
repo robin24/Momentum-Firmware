@@ -56,6 +56,9 @@ struct ScreenReader {
     bool capturing;
     bool turned_on; // the setting went from off to on; cleared when a frame is handed over
     SrFrame filling;
+    // Set by frame_end when it could not hand a frame over, taken by the service thread, which
+    // then asks for the screen again: a screen that stays still after it would not be read
+    bool frame_dropped;
 
     // Shared, guarded by mutex
     SrFrame ready;
@@ -162,6 +165,8 @@ static void sr_frame_end(void* context, uint8_t content_layer) {
         furi_thread_flags_set(sr->thread_id, SR_FLAG_FRAME);
     } else {
         sr->stats.dropped_frames++;
+        __atomic_store_n(&sr->frame_dropped, true, __ATOMIC_SEQ_CST);
+        furi_thread_flags_set(sr->thread_id, SR_FLAG_FRAME);
     }
 }
 
@@ -741,6 +746,8 @@ int32_t screen_reader_srv(void* p) {
             timeout = SR_SUBSCRIBE_POLL_MS;
         }
         uint32_t flags = furi_thread_flags_wait(SR_FLAG_ALL, FuriFlagWaitAny, timeout);
+        // The mutex is free here: a frame dropped at the hand-over is drawn again
+        if(__atomic_exchange_n(&sr->frame_dropped, false, __ATOMIC_SEQ_CST)) gui_update(sr->gui);
         sr_subscribe_desktop(sr);
         sr_subscribe_dolphin(sr);
         // A key press drops a held change before the frame the key causes is modelled
