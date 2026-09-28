@@ -478,6 +478,9 @@ size_t sr_model_process(
             for(uint8_t i = 0; i < cur->row_count; i++) {
                 const SrRow* row = &cur->rows[i];
                 if(row->kind != SrRowNormal) continue;
+                // On an on-screen keyboard the rows in its font are keys, or digits drawn one by
+                // one (the byte input's, whose value a note says): no news in themselves
+                if(cur->on_keyboard && row->font == SrFontKeyboard) continue;
                 if(sr_screen_has_text(&model->prev, row->text)) continue;
                 if(text[0] != '\0') sr_append(text, sizeof(text), ". ");
                 sr_append(text, sizeof(text), row->text);

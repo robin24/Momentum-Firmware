@@ -1,6 +1,7 @@
 #include "byte_input.h"
 
 #include <gui/elements.h>
+#include <gui/canvas_i.h>
 #include <furi.h>
 #include <assets_icons.h>
 
@@ -285,6 +286,7 @@ static void byte_input_draw_input_selected(Canvas* canvas, ByteInputModel* model
         if(i == model->selected_byte) {
             canvas_draw_box(canvas, text_x + 1 + byte_position * 14, text_y - 9, 13, 11);
             canvas_invert_color(canvas);
+            canvas_tap_hint_focus(canvas, 0, 0);
             canvas_draw_glyph(
                 canvas,
                 text_x + 2 + byte_position * 14,
@@ -584,10 +586,30 @@ static void byte_input_handle_ok(ByteInputModel* model) {
  * @param      canvas  The canvas
  * @param      _model  The model
  */
+/** The value for the screen reader, whose digits are drawn one by one: the bytes on screen, the
+ * byte being edited and, while its second digit is, that. Nothing is drawn */
+static void byte_input_tap_value(Canvas* canvas, ByteInputModel* model) {
+    char text[48];
+    size_t len = 0;
+    const uint8_t end = model->first_visible_byte + MIN(model->bytes_count, max_drawable_bytes);
+    for(uint8_t i = model->first_visible_byte; i < end && len + 3 < sizeof(text); i++) {
+        len += snprintf(text + len, sizeof(text) - len, len ? " %02X" : "%02X", model->bytes[i]);
+    }
+    snprintf(
+        text + len,
+        sizeof(text) - len,
+        ", byte %u of %u%s",
+        model->selected_byte + 1,
+        model->bytes_count,
+        model->selected_high_nibble ? "" : ", digit 2");
+    canvas_tap_hint_note(canvas, text, false);
+}
+
 static void byte_input_view_draw_callback(Canvas* canvas, void* _model) {
     ByteInputModel* model = _model;
 
     canvas_clear(canvas);
+    byte_input_tap_value(canvas, model);
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontKeyboard);
 
@@ -627,6 +649,14 @@ static void byte_input_view_draw_callback(Canvas* canvas, void* _model) {
                 }
                 canvas_set_color(canvas, ColorBlack);
                 if(icon != NULL) {
+                    if(selected) {
+                        canvas_tap_hint_focus(canvas, 0, 0);
+                        canvas_tap_note(
+                            canvas,
+                            keyboard_origin_x + keys[column].x,
+                            keyboard_origin_y + keys[column].y,
+                            keys[column].value == enter_symbol ? "Save" : "Backspace");
+                    }
                     canvas_draw_icon(
                         canvas,
                         keyboard_origin_x + keys[column].x,
@@ -641,6 +671,7 @@ static void byte_input_view_draw_callback(Canvas* canvas, void* _model) {
                             11,
                             13);
                         canvas_set_color(canvas, ColorWhite);
+                        canvas_tap_hint_focus(canvas, 0, 0);
                     } else if(
                         model->selected_row == -1 && row == 0 &&
                         model->selected_column == column) {
