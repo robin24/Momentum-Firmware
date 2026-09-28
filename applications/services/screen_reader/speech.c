@@ -135,7 +135,10 @@ static bool speech_wait_half_played(Speech* speech, uint8_t half) {
         if(waited >= SPEECH_EVENT_TIMEOUT_MS) return false;
         uint32_t flags = furi_thread_flags_wait(
             wanted | SPEECH_FLAG_STOP, FuriFlagWaitAny, SPEECH_EVENT_TIMEOUT_MS - waited);
-        if(flags & FuriFlagError) return false;
+        // A time-out comes early after a burst of wake-ups by other flags, since the wait takes
+        // the whole time since its start off what is left at every one (furi_thread_flags_wait):
+        // this loop's own clock decides instead, and a mid-word cut is not taken for the end
+        if(flags & FuriFlagError) continue;
         if(speech_superseded(speech)) return false;
         if(flags & wanted) return true;
     }
