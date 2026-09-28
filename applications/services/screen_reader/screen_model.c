@@ -321,6 +321,9 @@ size_t sr_screen_describe(const SrScreen* screen, char* out, size_t out_size) {
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* row = &screen->rows[i];
         if(row->kind != SrRowNormal || (int8_t)i == screen->title_row) continue;
+        // On an on-screen keyboard the rows of keys, drawn one character at a time with no
+        // space between, would read as words such as "qwertyuiop": the key is the focus
+        if(screen->on_keyboard && row->font == SrFontKeyboard) continue;
         if(out[0] != '\0') sr_append(out, out_size, ". ");
         sr_append(out, out_size, row->text);
     }
