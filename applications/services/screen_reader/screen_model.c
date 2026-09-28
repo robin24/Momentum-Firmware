@@ -407,31 +407,42 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
 static void
     sr_screen_announcement(const SrModel* model, const SrScreen* s, char* out, size_t out_size) {
     out[0] = '\0';
+    // The buttons, and the overflow's words, come last but are built first, and the text keeps
+    // room for them: a long dialog loses the end of its text, never what its buttons do
+    char buttons[SR_ANN_TEXT_MAX] = "";
+    if(model->verbosity >= 1) sr_append_buttons(s, buttons, sizeof(buttons));
+    const char* more = s->overflow ? ", and more" : "";
+    size_t keep = strlen(buttons) + (buttons[0] != '\0' ? 2 : 0) + strlen(more);
+    size_t size = out_size > keep + 1 ? out_size - keep : 1;
+
     char focus[SR_ANN_TEXT_MAX];
     sr_screen_focus_text(s, focus, sizeof(focus));
-    if(s->title_row >= 0) sr_append(out, out_size, sr_title_text(s));
+    if(s->title_row >= 0) sr_append(out, size, sr_title_text(s));
     if(focus[0] != '\0') {
         // An on-screen keyboard: the field, and any other line that is not a key, before the key
         for(uint8_t i = 0; s->on_keyboard && i < s->row_count; i++) {
             const SrRow* row = &s->rows[i];
             if(row->kind != SrRowNormal || row->font == SrFontKeyboard) continue;
             if((int8_t)i == s->title_row) continue;
-            if(out[0] != '\0') sr_append(out, out_size, ". ");
-            sr_append(out, out_size, row->text);
+            if(out[0] != '\0') sr_append(out, size, ". ");
+            sr_append(out, size, row->text);
         }
-        if(out[0] != '\0') sr_append(out, out_size, ". ");
-        sr_append(out, out_size, focus);
-        if(model->verbosity >= 2) sr_append_focus_position(s, out, out_size);
+        if(out[0] != '\0') sr_append(out, size, ". ");
+        sr_append(out, size, focus);
+        if(model->verbosity >= 2) sr_append_focus_position(s, out, size);
     } else {
         for(uint8_t i = 0; i < s->row_count; i++) {
             const SrRow* row = &s->rows[i];
             if(row->kind != SrRowNormal || (int8_t)i == s->title_row) continue;
-            if(out[0] != '\0') sr_append(out, out_size, ". ");
-            sr_append(out, out_size, row->text);
+            if(out[0] != '\0') sr_append(out, size, ". ");
+            sr_append(out, size, row->text);
         }
     }
-    if(model->verbosity >= 1) sr_append_buttons(s, out, out_size);
-    if(s->overflow) sr_append(out, out_size, ", and more");
+    if(buttons[0] != '\0') {
+        if(out[0] != '\0') sr_append(out, out_size, ". ");
+        sr_append(out, out_size, buttons);
+    }
+    sr_append(out, out_size, more);
 }
 
 /** A field's row, not a key's: normal text outside the keyboard font */
