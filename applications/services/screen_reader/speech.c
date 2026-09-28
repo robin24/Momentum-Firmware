@@ -57,6 +57,7 @@ struct Speech {
     // A timed mute, sr voice off with seconds: guarded by mutex, with voice_enabled
     bool voice_timed;
     uint32_t voice_on_at; /* tick at which a timed mute ends */
+    volatile bool card_changed; /* a card mounted or removed since the worker last looked */
 
     // Worker thread only
     SpeechPcm pcm;
@@ -79,6 +80,7 @@ struct Speech {
     File* voice_file; /* reused for every clip, the missing log and the look for a set */
     bool clip_tried; /* the current item tried to open a clip */
     bool clip_opened; /* and opened at least one */
+    bool card_lost; /* and an open failed with the card not ready or failing */
     SpeechVoiceState voice;
     char path[SPEECH_VOICE_PATH_MAX];
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
@@ -357,6 +359,12 @@ static void speech_take_voice_set(Speech* speech) {
         speech_voice_forget(speech);
     }
     speech_unlock(speech);
+    // A card mounted or removed since the last item, perhaps another card: the set is resolved
+    // again, as storage_sd_status alone does not tell a card swapped between two items
+    if(speech->card_changed) {
+        speech->card_changed = false;
+        speech_voice_forget(speech);
+    }
 }
 
 /**
@@ -444,7 +452,13 @@ static bool speech_play_clip(Speech* speech, const char* path) {
     if(took > speech->open_max_ms) speech->open_max_ms = took;
     speech->clip_tried = true;
     if(!opened) {
+        FS_Error error = storage_file_get_error(file);
         storage_file_close(file);
+        // Not the word but the card: gone or failing. The item ends, and its words are not missing
+        if(error == FSE_NOT_READY || error == FSE_INTERNAL) {
+            speech->card_lost = true;
+            speech->aborted = true;
+        }
         return false;
     }
     speech->clip_opened = true;
@@ -468,15 +482,19 @@ static bool speech_play_clip(Speech* speech, const char* path) {
  */
 static void speech_spell_word(Speech* speech, const char* word) {
     char name[3];
+    bool played = false; // the letter before played: a gap separates the two
     for(const char* p = word; *p != '\0' && !speech->aborted; p++) {
         if(!speech_voice_letter_clip(*p, name)) continue;
-        if(p != word && !speech_push_silence(speech, SPEECH_VOICE_LETTER_GAP_MS)) return;
-        if(speech_voice_path(speech->set, name, speech->path, sizeof(speech->path)) > 0 &&
-           speech_play_clip(speech, speech->path)) {
+        // After a letter that did not play, as after every letter of a set whose folder has
+        // gone, a gap would only add silence
+        if(played && !speech_push_silence(speech, SPEECH_VOICE_LETTER_GAP_MS)) return;
+        played = speech_voice_path(speech->set, name, speech->path, sizeof(speech->path)) > 0 &&
+                 speech_play_clip(speech, speech->path);
+        if(played) {
             speech->voice.clip_words++;
-            continue;
+        } else if(!speech->card_lost) {
+            speech_voice_missing(&speech->voice, name);
         }
-        speech_voice_missing(&speech->voice, name);
     }
 }
 
@@ -505,7 +523,7 @@ static void speech_speak_words(Speech* speech, bool spell) {
             speech_voice_path(speech->set, word.word, speech->path, sizeof(speech->path)) > 0 &&
             speech_play_clip(speech, speech->path)) {
             speech->voice.clip_words++;
-        } else {
+        } else if(!speech->card_lost) {
             speech->voice.fallback_words++;
             speech_voice_missing(&speech->voice, word.word);
             speech_spell_word(speech, word.word);
@@ -576,16 +594,22 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     speech->started = furi_get_tick();
     speech->clip_tried = false;
     speech->clip_opened = false;
+    speech->card_lost = false;
     speech_speak_words(speech, spell);
     speech_item_end(speech);
-    // Muted meanwhile (sr voice off, around a transfer): the words wait in the log for an item
-    // with the voice on, so that no file is opened once the command has answered
-    if(speech_voice_on(speech)) speech_write_missing(speech);
-    // Clips tried and not one opened, not even a letter: the set's folder has most likely gone
-    // from the card, so the next item resolves the set again. With the folder there, an item
-    // that tries clips opens one, but for a word with no letter or digit clip to spell it
-    // with, after which the same set is merely resolved again. Nothing on the normal path
-    if(speech->clip_tried && !speech->clip_opened) speech_voice_forget(speech);
+    // The card went, or clips were tried and not one opened, not even a letter: the set's
+    // folder has most likely gone. The next item resolves the set again, and the words this one
+    // could not find are no news: neither written nor remembered as missing. With the folder
+    // there, an item that tries clips opens one, but for a word with no letter or digit clip to
+    // spell it with. Nothing on the normal path
+    if(speech->card_lost || (speech->clip_tried && !speech->clip_opened)) {
+        speech_voice_forget(speech);
+        speech_voice_missing_reset(&speech->voice);
+    } else if(speech_voice_on(speech)) {
+        // Muted meanwhile (sr voice off, around a transfer): the words wait in the log for an
+        // item with the voice on, so that no file is opened once the command has answered
+        speech_write_missing(speech);
+    }
 }
 
 static uint32_t speech_clamp_rate(uint32_t rate) {
@@ -804,6 +828,11 @@ bool speech_mute_voice_for(Speech* speech, uint32_t ms) {
     speech_unlock(speech);
     if(timed) speech_stop(speech);
     return timed;
+}
+
+void speech_voice_card_changed(Speech* speech) {
+    furi_check(speech);
+    speech->card_changed = true;
 }
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {

@@ -94,6 +94,10 @@ bool speech_mute_voice_for(Speech* speech, uint32_t ms);
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
 
+/** A card was mounted or removed: the next utterance resolves the voice set again, so that a
+ *  card swapped between two utterances is noticed. Sets a flag only; any thread. */
+void speech_voice_card_changed(Speech* speech);
+
 /** Use the voice set of that name, a folder under /ext/sr/voices, from the next utterance on.
  *  An empty name, or a name whose folder the card lacks, means the first set found in name
  *  order, and a set asked for is taken as soon as its folder is on the card; a name the engine

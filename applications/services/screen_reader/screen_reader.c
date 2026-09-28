@@ -273,14 +273,17 @@ static void sr_subscribe_dolphin(ScreenReader* sr) {
 }
 
 // A storage thread, on card events (a mount is published from a helper thread the storage
-// service starts). Only a flag, and only for a mount: when the card was not
-// ready as the dolphin started, it loads its state on the mount and publishes nothing, so the
-// level the reader noted may be stale
+// service starts). Only flags. A mount: when the card was not ready as the dolphin started, it
+// loads its state on the mount and publishes nothing, so the level the reader noted may be stale.
+// A mount or a removal: the speech engine resolves its voice set again
 static void sr_storage_callback(const void* message, void* context) {
     const StorageEvent* event = message;
     ScreenReader* sr = context;
     if(event->type == StorageEventTypeCardMount) {
         furi_thread_flags_set(sr->thread_id, SR_FLAG_STORAGE);
+    }
+    if(event->type == StorageEventTypeCardMount || event->type == StorageEventTypeCardUnmount) {
+        speech_voice_card_changed(sr->speech);
     }
 }
 
