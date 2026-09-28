@@ -232,6 +232,13 @@ static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
     furi_string_free(name);
 }
 
+// The item being spoken when the voice goes off stops at its next sample; the command answers
+// once it has ended, at most a second later, so that no clip is opened after the answer
+static void sr_cli_wait_idle(Speech* speech) {
+    for(int i = 0; i < 100 && speech_is_busy(speech); i++)
+        furi_delay_ms(10);
+}
+
 static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
     FuriString* sub = furi_string_alloc();
     bool has = args_read_string_and_trim(args, sub);
@@ -246,12 +253,14 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
         int seconds = 0;
         if(furi_string_empty(args)) {
             speech_set_voice_clips(speech, false);
+            sr_cli_wait_idle(speech);
             printf("voice off: muted until sr voice on or a reboot\r\n");
         } else if(
             !args_read_int_and_trim(args, &seconds) || seconds < 1 ||
             seconds > SR_VOICE_OFF_MAX_S) {
             printf("sr voice off [1..%d seconds]\r\n", SR_VOICE_OFF_MAX_S);
         } else if(speech_mute_voice_for(speech, (uint32_t)seconds * 1000)) {
+            sr_cli_wait_idle(speech);
             printf("voice off for %d s, then on again by itself\r\n", seconds);
         } else {
             printf("voice off: muted until sr voice on or a reboot\r\n");

@@ -578,7 +578,9 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     speech->clip_opened = false;
     speech_speak_words(speech, spell);
     speech_item_end(speech);
-    speech_write_missing(speech);
+    // Muted meanwhile (sr voice off, around a transfer): the words wait in the log for an item
+    // with the voice on, so that no file is opened once the command has answered
+    if(speech_voice_on(speech)) speech_write_missing(speech);
     // Clips tried and not one opened, not even a letter: the set's folder has most likely gone
     // from the card, so the next item resolves the set again. With the folder there, an item
     // that tries clips opens one, but for a word with no letter or digit clip to spell it
@@ -787,6 +789,7 @@ void speech_set_voice_clips(Speech* speech, bool enabled) {
     speech->voice_enabled = enabled;
     speech->voice_timed = false;
     speech_unlock(speech);
+    if(!enabled) speech_stop(speech);
 }
 
 bool speech_mute_voice_for(Speech* speech, uint32_t ms) {
@@ -799,6 +802,7 @@ bool speech_mute_voice_for(Speech* speech, uint32_t ms) {
         speech->voice_on_at = furi_get_tick() + ms;
     }
     speech_unlock(speech);
+    if(timed) speech_stop(speech);
     return timed;
 }
 

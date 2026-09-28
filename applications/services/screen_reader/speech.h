@@ -80,15 +80,16 @@ typedef struct {
     char wanted[32]; /**< the set asked for, empty for the first found */
 } SpeechVoiceStats;
 
-/** Recorded voice on or off, from the next utterance on. Off mutes: a text item completes at
- *  once, no file is opened, nothing is played, until on again or a reboot. Either ends a timed
- *  mute. */
+/** Recorded voice on or off. Off mutes: it stops what is being said, as speech_stop does, and
+ *  from then on a text item completes at once, no file is opened, nothing is played, until on
+ *  again or a reboot; the missing words of a stopped item wait in memory for an item with the
+ *  voice on. speech_is_busy tells when the stopped item has ended. Either ends a timed mute. */
 void speech_set_voice_clips(Speech* speech, bool enabled);
 
-/** Mute as off does, for ms only: the voice is on again by itself at the first utterance after
- *  that. It is the guard the generator sets around a transfer and renews as it goes, so a tool
- *  that dies cannot leave the reader muted. A voice already off without an end stays so, and
- *  false is returned; a timed mute is renewed. */
+/** Mute as off does, stopping what is being said, for ms only: the voice is on again by itself
+ *  at the first utterance after that. It is the guard the generator sets around a transfer and
+ *  renews as it goes, so a tool that dies cannot leave the reader muted. A voice already off
+ *  without an end stays so, and false is returned; a timed mute is renewed. */
 bool speech_mute_voice_for(Speech* speech, uint32_t ms);
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
