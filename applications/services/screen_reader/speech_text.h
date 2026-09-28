@@ -22,7 +22,7 @@ extern "C" {
  * Rewrite `in` into `out`: numbers and acronyms become words or spelled letters, technical terms
  * their pronunciation, punctuation between words a pause or a word, and everything else a space.
  * The result is printable ASCII. Returns the length written; the text is cut when it does not
- * fit, and `out` is always terminated. A null `in` gives an empty string. `in` and `out` must
+ * fit, after its last whole word, and `out` is always terminated. A null `in` gives an empty string. `in` and `out` must
  * not overlap.
  */
 size_t speech_text_expand(const char* in, char* out, size_t out_size);

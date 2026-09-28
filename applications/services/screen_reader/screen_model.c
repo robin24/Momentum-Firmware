@@ -12,6 +12,24 @@
 #define SR_PROMPT_MAX_Y    12
 #define SR_SPONTANEOUS_MAX 80
 
+static bool sr_is_word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '\'';
+}
+
+/** out was cut short after len characters, next being the first left out: when that split a
+ *  word, the text ends before the word, so speech never gets a fragment to spell and to log as a
+ *  missing word. One word longer than the whole buffer keeps its cut. */
+static void sr_cut_at_word(char* out, size_t len, char next) {
+    if(len == 0 || !sr_is_word_char(next) || !sr_is_word_char(out[len - 1])) return;
+    size_t j = len;
+    while(j > 0 && sr_is_word_char(out[j - 1]))
+        j--;
+    if(j == 0) return;
+    while(j > 0 && out[j - 1] == ' ')
+        j--;
+    out[j] = '\0';
+}
+
 static void sr_copy(char* out, size_t out_size, const char* in) {
     if(out_size == 0) return;
     size_t i = 0;
@@ -20,12 +38,19 @@ static void sr_copy(char* out, size_t out_size, const char* in) {
         i++;
     }
     out[i] = '\0';
+    sr_cut_at_word(out, i, in[i]);
 }
 
 static void sr_append(char* out, size_t out_size, const char* in) {
     size_t len = strlen(out);
     if(len + 1 >= out_size) return;
-    sr_copy(out + len, out_size - len, in);
+    size_t i = 0;
+    while(len + i + 1 < out_size && in[i] != '\0') {
+        out[len + i] = in[i];
+        i++;
+    }
+    out[len + i] = '\0';
+    sr_cut_at_word(out, len + i, in[i]);
 }
 
 void sr_normalize(const char* in, char* out, size_t out_size) {
@@ -533,7 +558,9 @@ size_t sr_model_process(
                 // Every change is reported: the service says them at most once per change
                 // delay, always the latest (sr_throttle.h). Without a recent key the text is cut
                 if(!key_recent && strlen(text) > SR_SPONTANEOUS_MAX) {
+                    char next = text[SR_SPONTANEOUS_MAX];
                     text[SR_SPONTANEOUS_MAX] = '\0';
+                    sr_cut_at_word(text, SR_SPONTANEOUS_MAX, next);
                 }
                 sr_emit(out, out_max, &n, SrAnnChange, false, text);
             }
