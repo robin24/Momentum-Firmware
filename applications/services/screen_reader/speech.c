@@ -82,6 +82,8 @@ struct Speech {
     bool clip_tried; /* the current item tried to open a clip */
     bool clip_opened; /* and opened at least one */
     bool card_lost; /* and an open failed with the card not ready or failing */
+    bool missing_failed; /* the set's missing.txt could not be written: not tried again till the
+                            set is resolved again */
     SpeechVoiceState voice;
     char path[SPEECH_VOICE_PATH_MAX];
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
@@ -345,6 +347,7 @@ static void speech_voice_forget(Speech* speech) {
     speech->vocabulary = false;
     speech->set[0] = '\0';
     speech->voice_settings[0] = '\0';
+    speech->missing_failed = false;
 }
 
 // Whether the card has the folder of the set asked for; false when none was asked for
@@ -542,26 +545,36 @@ static void speech_speak_words(Speech* speech, bool spell) {
 
 /**
  * Append the words the last utterance lacked to the missing list of the set in use, its
- * missing.txt. When the file cannot be opened the words stay in the log and a later utterance
- * writes them.
+ * missing.txt: the lines built in the file buffer, idle between items, and written at once. The
+ * log is cleared only when all of it reached the card; otherwise (a full or failing card) the
+ * words stay in it, and no item tries again until the set is resolved again.
  */
 static void speech_write_missing(Speech* speech) {
     size_t n = speech_voice_log_count(&speech->voice);
-    if(n == 0) return;
+    if(n == 0 || speech->missing_failed) return;
     if(!speech_voice_set_file(speech->set, "missing.txt", speech->path, sizeof(speech->path))) {
         return;
     }
-    File* file = speech->voice_file;
-    bool opened = storage_file_open(file, speech->path, FSAM_WRITE, FSOM_OPEN_APPEND);
-    if(opened) {
-        for(size_t i = 0; i < n; i++) {
-            const char* w = speech_voice_log_word(&speech->voice, i);
-            storage_file_write(file, w, strlen(w));
-            storage_file_write(file, "\n", 1);
-        }
+    // At most SPEECH_VOICE_LOG_MAX words of SPEECH_VOICE_WORD_MAX - 1 characters, each with its
+    // newline: under half of the buffer
+    size_t len = 0;
+    for(size_t i = 0; i < n; i++) {
+        const char* w = speech_voice_log_word(&speech->voice, i);
+        size_t wl = strlen(w);
+        if(len + wl + 1 > SPEECH_FILE_CHUNK) break;
+        memcpy(&speech->file_buffer[len], w, wl);
+        len += wl;
+        speech->file_buffer[len++] = '\n';
     }
+    File* file = speech->voice_file;
+    bool written = storage_file_open(file, speech->path, FSAM_WRITE, FSOM_OPEN_APPEND) &&
+                   storage_file_write(file, speech->file_buffer, len) == len;
     storage_file_close(file);
-    if(opened) speech_voice_log_clear(&speech->voice);
+    if(written) {
+        speech_voice_log_clear(&speech->voice);
+    } else {
+        speech->missing_failed = true;
+    }
 }
 
 // A timed mute that is over turns the voice on again. Called with the mutex held
