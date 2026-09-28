@@ -556,10 +556,11 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
         if(v < 0) v = 0;
         if(v > 100) v = 100;
         momentum_settings.sr_volume = (uint32_t)v;
-        momentum_settings_save();
         speech_set_volume(sr->speech, (uint8_t)v);
         snprintf(text, SR_DESCRIBE_TEXT_MAX, "Volume %d", v);
         speech_say(sr->speech, text, true, false);
+        // Saved once the feedback is queued, so it does not wait for the file to be written
+        momentum_settings_save();
         break;
     }
     default:
@@ -595,10 +596,10 @@ static bool sr_model_screen_quietly(ScreenReader* sr) {
 // and on every screen, the lock screen and the PIN entry included, where Back with Down means
 // nothing else: it is how a user who boots into a lock with the reader off gets speech back.
 // Off: the reader goes off as sr off turns it off, then "Screen reader off" is said by the engine
-// itself, as sr say is. On: the setting saved, the screen modelled quietly, then one utterance in
+// itself, as sr say is. On: the setting on, the screen modelled quietly, then one utterance in
 // parts, "Screen reader on. " first and the screen as Back and Up reads it right after; "Screen
-// reader on" alone when no frame came. A change held from before either would be read after it,
-// from a screen long gone
+// reader on" alone when no frame came; the setting is saved after that. A change held from before
+// either would be read after it, from a screen long gone
 static void sr_toggle(ScreenReader* sr) {
     sr_throttle_clear(&sr->throttle);
     if(momentum_settings.screen_reader) {
@@ -609,7 +610,6 @@ static void sr_toggle(ScreenReader* sr) {
         return;
     }
     momentum_settings.screen_reader = true;
-    momentum_settings_save();
     char* text = malloc(SR_DESCRIBE_TEXT_MAX);
     size_t n = strlcpy(text, "Screen reader on. ", SR_DESCRIBE_TEXT_MAX);
     if(sr_model_screen_quietly(sr)) {
@@ -620,6 +620,8 @@ static void sr_toggle(ScreenReader* sr) {
     sr_push_voice_set(sr);
     speech_say_parts(sr->speech, text);
     free(text);
+    // Saved once the confirmation is queued, as the volume is
+    momentum_settings_save();
 }
 
 void screen_reader_get_frame(ScreenReader* sr, SrFrame* out) {
