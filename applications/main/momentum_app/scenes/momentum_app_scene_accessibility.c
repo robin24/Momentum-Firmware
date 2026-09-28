@@ -27,12 +27,17 @@ static void momentum_app_scene_accessibility_screen_reader_changed(VariableItem*
     app->save_settings = true;
 }
 
+// The Voice row: Auto, the first set in name order (the setting empty), then the sets on the card
+static const char* momentum_app_scene_accessibility_voice_name(MomentumApp* app, uint8_t index) {
+    return index ? *CharList_get(app->voice_set_names, index - 1) : "";
+}
+
 static void momentum_app_scene_accessibility_voice_changed(VariableItem* item) {
     MomentumApp* app = variable_item_get_context(item);
     if(CharList_size(app->voice_set_names) == 0) return;
     uint8_t index = variable_item_get_current_value_index(item);
-    const char* name = *CharList_get(app->voice_set_names, index);
-    variable_item_set_current_value_text(item, name);
+    const char* name = momentum_app_scene_accessibility_voice_name(app, index);
+    variable_item_set_current_value_text(item, index ? name : "Auto");
     strlcpy(momentum_settings.sr_voice_set, name, SR_VOICE_SET_LEN);
     app->voice_set_index = index;
     app->save_settings = true;
@@ -124,12 +129,18 @@ void momentum_app_scene_accessibility_on_enter(void* context) {
     item = variable_item_list_add(
         var_item_list,
         "Voice",
-        voice_sets ? voice_sets : 1,
+        voice_sets ? voice_sets + 1 : 1,
         momentum_app_scene_accessibility_voice_changed,
         app);
     variable_item_set_current_value_index(item, voice_sets ? app->voice_set_index : 0);
-    variable_item_set_current_value_text(
-        item, voice_sets ? *CharList_get(app->voice_set_names, app->voice_set_index) : "None");
+    if(!voice_sets) {
+        variable_item_set_current_value_text(item, "None");
+    } else if(app->voice_set_index) {
+        variable_item_set_current_value_text(
+            item, momentum_app_scene_accessibility_voice_name(app, app->voice_set_index));
+    } else {
+        variable_item_set_current_value_text(item, "Auto");
+    }
 
     item = variable_item_list_add(
         var_item_list,

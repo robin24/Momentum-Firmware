@@ -355,10 +355,11 @@ MomentumApp* momentum_app_alloc() {
     storage_file_free(folder);
 
     // The recorded voice sets on the card: same scan as asset packs above, but sorted by
-    // strcmp (byte order), not case-insensitively, so index 0 is the set the engine's own
+    // strcmp (byte order), not case-insensitively, so the first is the set the engine's own
     // fallback picks (speech_voice_set_before keeps the smallest name by strcmp). The read
     // buffer is one byte longer than a set name so a longer name is seen as such and skipped
-    // (see the listing rule below).
+    // (see the listing rule below). The Voice row offers Auto before them, the setting empty:
+    // voice_set_index is 0 for Auto, and for a set its place in the list plus one.
     app->voice_set_index = 0;
     CharList_init(app->voice_set_names);
     bool voice_set_found = false;
@@ -395,6 +396,7 @@ MomentumApp* momentum_app_alloc() {
     }
     free(voice_name);
     storage_file_free(voice_folder);
+    app->voice_set_index = voice_set_found ? app->voice_set_index + 1 : 0;
 
     CharList_init(app->mainmenu_app_labels);
     CharList_init(app->mainmenu_app_exes);
