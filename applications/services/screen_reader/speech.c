@@ -54,6 +54,9 @@ struct Speech {
     // Set by any thread, read by the worker
     volatile uint8_t volume;
     volatile bool voice_enabled;
+    // A timed mute, sr voice off with seconds: guarded by mutex, with voice_enabled
+    bool voice_timed;
+    uint32_t voice_on_at; /* tick at which a timed mute ends */
 
     // Worker thread only
     SpeechPcm pcm;
@@ -534,11 +537,28 @@ static void speech_write_missing(Speech* speech) {
     if(opened) speech_voice_log_clear(&speech->voice);
 }
 
+// A timed mute that is over turns the voice on again. Called with the mutex held
+static void speech_voice_expire(Speech* speech, uint32_t now) {
+    if(speech_voice_mute_over(
+           speech->voice_enabled, speech->voice_timed, speech->voice_on_at, now)) {
+        speech->voice_enabled = true;
+        speech->voice_timed = false;
+    }
+}
+
+static bool speech_voice_on(Speech* speech) {
+    speech_lock(speech);
+    speech_voice_expire(speech, furi_get_tick());
+    bool on = speech->voice_enabled;
+    speech_unlock(speech);
+    return on;
+}
+
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     speech_take_voice_set(speech);
     // Muted (sr voice off), or no voice set on the card: the item completes at once, without
     // the speaker, a file or the missing list; the voice status counts it
-    if(!speech->voice_enabled || !speech_voice_ready(speech)) {
+    if(!speech_voice_on(speech) || !speech_voice_ready(speech)) {
         speech->muted++;
         speech_lock(speech);
         speech->stats.speaking = false;
@@ -763,15 +783,36 @@ void speech_get_stats(Speech* speech, SpeechStats* out) {
 
 void speech_set_voice_clips(Speech* speech, bool enabled) {
     furi_check(speech);
+    speech_lock(speech);
     speech->voice_enabled = enabled;
+    speech->voice_timed = false;
+    speech_unlock(speech);
+}
+
+bool speech_mute_voice_for(Speech* speech, uint32_t ms) {
+    furi_check(speech);
+    speech_lock(speech);
+    bool timed = speech->voice_enabled || speech->voice_timed;
+    if(timed) {
+        speech->voice_enabled = false;
+        speech->voice_timed = true;
+        speech->voice_on_at = furi_get_tick() + ms;
+    }
+    speech_unlock(speech);
+    return timed;
 }
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     furi_check(speech && out);
+    speech_lock(speech);
+    uint32_t now = furi_get_tick();
+    speech_voice_expire(speech, now);
+    out->enabled = speech->voice_enabled;
+    out->on_in_ms = !speech->voice_enabled && speech->voice_timed ? speech->voice_on_at - now : 0;
+    speech_unlock(speech);
     // The worker owns these counters and writes them one word at a time; 32 bit reads are
     // atomic on this core, so the snapshot is consistent enough for a status line. It writes the
     // names one byte at a time, so a read while a set is resolved shows at worst a mixed name
-    out->enabled = speech->voice_enabled;
     out->vocabulary = speech->vocabulary;
     out->clip_words = *(volatile uint32_t*)&speech->voice.clip_words;
     out->fallback_words = *(volatile uint32_t*)&speech->voice.fallback_words;

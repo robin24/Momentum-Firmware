@@ -65,6 +65,7 @@ void speech_set_volume(Speech* speech, uint8_t volume);
 typedef struct {
     bool enabled; /**< recorded clips are used when the vocabulary is present;
                        false means muted (sr voice off) */
+    uint32_t on_in_ms; /**< a timed mute's time left, 0 when the mute has no end */
     bool vocabulary; /**< a voice set under /ext/sr/voices was found on the card */
     uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
     uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */
@@ -80,9 +81,15 @@ typedef struct {
 } SpeechVoiceStats;
 
 /** Recorded voice on or off, from the next utterance on. Off mutes: a text item completes at
- *  once, no file is opened, nothing is played, until on again or a reboot; it is the guard the
- *  generator sets around a sync. */
+ *  once, no file is opened, nothing is played, until on again or a reboot. Either ends a timed
+ *  mute. */
 void speech_set_voice_clips(Speech* speech, bool enabled);
+
+/** Mute as off does, for ms only: the voice is on again by itself at the first utterance after
+ *  that. It is the guard the generator sets around a transfer and renews as it goes, so a tool
+ *  that dies cannot leave the reader muted. A voice already off without an end stays so, and
+ *  false is returned; a timed mute is renewed. */
+bool speech_mute_voice_for(Speech* speech, uint32_t ms);
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
 

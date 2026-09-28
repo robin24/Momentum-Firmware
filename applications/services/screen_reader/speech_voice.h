@@ -108,6 +108,12 @@ void speech_voice_log_clear(SpeechVoiceState* state);
  *  whose missing list has none of them. The counters since boot keep their values. */
 void speech_voice_missing_reset(SpeechVoiceState* state);
 
+/** Whether a timed mute (sr voice off with a number of seconds) is over at tick now: the voice
+ *  is off for that mute only, and on_at, the tick at which it ends, has come, across a wrap of
+ *  the tick counter too. The worker then turns the voice on again, so a tool that dies during a
+ *  transfer cannot leave the reader muted. */
+bool speech_voice_mute_over(bool enabled, bool timed, uint32_t on_at, uint32_t now);
+
 #ifdef __cplusplus
 }
 #endif

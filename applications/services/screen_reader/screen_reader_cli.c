@@ -13,6 +13,9 @@
 #include <momentum/settings.h>
 #include <storage/storage.h>
 
+// The longest timed mute, sr voice off with seconds: an hour
+#define SR_VOICE_OFF_MAX_S 3600
+
 // sr voice use saves a name that passed speech_voice_set_valid: the setting holds any such whole
 _Static_assert(
     SR_VOICE_SET_LEN == SPEECH_VOICE_SET_MAX,
@@ -102,7 +105,7 @@ static void sr_cli_usage(void) {
         SR_CHANGE_MS_MAX);
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
-        "  voice on|off|status|list|use <set>  recorded word clips from the card; off mutes speech until on or a reboot; use picks the set (saved)\r\n");
+        "  voice on|off [s]|status|list|use <set>  recorded word clips from the card; off mutes speech until on or a reboot, or for s seconds; use picks the set (saved)\r\n");
     printf(
         "  chord up|down|ok|okhold|downhold|left|right  what Back plus that key does: screen,\r\n"
         "               status bar, focus, focus spelled, reader off or on (also while it is off),\r\n"
@@ -149,9 +152,17 @@ static void sr_cli_print_voice(ScreenReader* sr) {
     // The set asked for is named too when it is not the one in use: its folder is not on the
     // card (the engine took the first set found), or there is no set or no card at all
     bool differs = v.wanted[0] != '\0' && strcmp(v.wanted, v.set) != 0;
+    // A timed mute says how long it has left, rounded up
+    char state[32] = "on";
+    if(!v.enabled && v.on_in_ms) {
+        snprintf(
+            state, sizeof(state), "off for %lu s more", (unsigned long)((v.on_in_ms + 999) / 1000));
+    } else if(!v.enabled) {
+        snprintf(state, sizeof(state), "off");
+    }
     printf(
         "voice: %s, vocabulary %s set %s%s%s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, open max %lu ms, last %lu ms\r\n",
-        v.enabled ? "on" : "off",
+        state,
         v.vocabulary ? "yes" : "no",
         v.set[0] ? v.set : "none",
         differs ? " wanted " : "",
@@ -228,8 +239,23 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
         speech_set_voice_clips(screen_reader_get_speech(sr), true);
         printf("voice on\r\n");
     } else if(has && furi_string_cmp_str(sub, "off") == 0) {
-        speech_set_voice_clips(screen_reader_get_speech(sr), false);
-        printf("voice off: muted until sr voice on or a reboot\r\n");
+        // With seconds, the guard the generator sets around a transfer and renews as it goes:
+        // the voice comes back by itself if the tool dies. A voice already off without an end
+        // stays so
+        Speech* speech = screen_reader_get_speech(sr);
+        int seconds = 0;
+        if(furi_string_empty(args)) {
+            speech_set_voice_clips(speech, false);
+            printf("voice off: muted until sr voice on or a reboot\r\n");
+        } else if(
+            !args_read_int_and_trim(args, &seconds) || seconds < 1 ||
+            seconds > SR_VOICE_OFF_MAX_S) {
+            printf("sr voice off [1..%d seconds]\r\n", SR_VOICE_OFF_MAX_S);
+        } else if(speech_mute_voice_for(speech, (uint32_t)seconds * 1000)) {
+            printf("voice off for %d s, then on again by itself\r\n", seconds);
+        } else {
+            printf("voice off: muted until sr voice on or a reboot\r\n");
+        }
     } else if(!has || furi_string_cmp_str(sub, "status") == 0) {
         sr_cli_print_voice(sr);
     } else if(furi_string_cmp_str(sub, "list") == 0) {
@@ -237,7 +263,7 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
     } else if(furi_string_cmp_str(sub, "use") == 0) {
         sr_cli_voice_use(sr, args);
     } else {
-        printf("sr voice on|off|status|list|use <set>\r\n");
+        printf("sr voice on|off [seconds]|status|list|use <set>\r\n");
     }
     furi_string_free(sub);
 }

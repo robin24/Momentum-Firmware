@@ -179,3 +179,7 @@ void speech_voice_missing_reset(SpeechVoiceState* state) {
     state->count = 0;
     state->log_count = 0;
 }
+
+bool speech_voice_mute_over(bool enabled, bool timed, uint32_t on_at, uint32_t now) {
+    return !enabled && timed && (int32_t)(now - on_at) >= 0;
+}
