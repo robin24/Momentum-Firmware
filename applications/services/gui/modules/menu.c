@@ -165,6 +165,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                 menu_centered_icon(canvas, item, x_off, y_off, 40, 20);
                 menu_get_name(item, name, true);
                 size_t scroll_counter = menu_scroll_counter(model, selected);
+                if(selected) canvas_tap_hint_focus(canvas, position + 1, items_count);
                 elements_scrollable_text_line_centered(
                     canvas, 20 + x_off, 26 + y_off, 36, name, scroll_counter, false, true);
                 if(selected) {
@@ -207,6 +208,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                     canvas_set_font(canvas, FontPrimary);
                     menu_get_name(item, name, false);
                     size_t scroll_counter = menu_scroll_counter(model, true);
+                    canvas_tap_hint_focus(canvas, position + 1, items_count);
                     elements_scrollable_text_line_centered(
                         canvas,
                         pos_x,
@@ -258,6 +260,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                     canvas_set_font(canvas, FontSecondary);
                     menu_get_name(item, name, true);
                     size_t scroll_counter = menu_scroll_counter(model, true);
+                    canvas_tap_hint_focus(canvas, position + 1, items_count);
                     elements_scrollable_text_line(
                         canvas,
                         pos_x + width / 2 + 2,
@@ -302,6 +305,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                 menu_centered_icon(canvas, item, 0, y_off, 16, 16);
                 menu_get_name(item, name, true);
                 size_t scroll_counter = menu_scroll_counter(model, selected);
+                if(selected) canvas_tap_hint_focus(canvas, position + 1, items_count);
                 elements_scrollable_text_line(
                     canvas, 17, y_off + 12, 46, name, scroll_counter, false);
                 if(selected) {
@@ -344,6 +348,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                     snprintf(indexstr, sizeof(indexstr), "%d.", index);
                     furi_string_replace_at(name, 0, 0, indexstr);
 
+                    if(selected) canvas_tap_hint_focus(canvas, position + 1, items_count);
                     elements_scrollable_text_line(
                         canvas, x_off + 2, y_off + 12, 60, name, scroll_counter, false);
 
@@ -376,6 +381,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                     item = MenuItemArray_get(model->items, index);
                     menu_get_name(item, name, true);
 
+                    if(selected) canvas_tap_hint_focus(canvas, position + 1, items_count);
                     elements_scrollable_text_line(
                         canvas, x_off + 1, y_off + 7, 62, name, scroll_counter, false);
 
@@ -459,6 +465,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                 menu_get_name(item, name, true);
                 uint8_t yPos = startY + ((i - position) * itemHeight);
                 size_t scroll_counter = menu_scroll_counter(model, i == position);
+                if(i == position) canvas_tap_hint_focus(canvas, position + 1, items_count);
                 elements_scrollable_text_line(canvas, 83, yPos, 43, name, scroll_counter, false);
             }
             break;
@@ -554,6 +561,7 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
             if(center_item) {
                 menu_get_name(center_item, name, false);
                 size_t scroll_counter = menu_scroll_counter(model, true);
+                canvas_tap_hint_focus(canvas, position + 1, items_count);
                 elements_scrollable_text_line_centered(
                     canvas,
                     pos_x_center,

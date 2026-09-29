@@ -46,8 +46,9 @@ static void input_cli_dump(PipeSide* pipe, FuriString* args, FuriPubSub* event_p
 
 static void fake_input(FuriPubSub* event_pubsub, InputKey key, InputType type) {
     bool wrap = type == InputTypeShort || type == InputTypeLong;
-    InputEvent event;
-    event.key = key;
+    // Made in software, as the remote control's events: view ports do not remap them, and the
+    // screen reader keeps their chords apart from the keys'
+    InputEvent event = {.sequence_source = INPUT_SEQUENCE_SOURCE_SOFTWARE, .key = key};
 
     if(wrap) {
         event.type = InputTypePress;

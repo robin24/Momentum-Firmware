@@ -18,6 +18,10 @@
 #define SPEECH_EVENT_TIMEOUT_MS   200
 #define SPEECH_BUS_POLL_MS        5
 #define SPEECH_FILE_CHUNK         512 /* bytes read from the card at a time */
+// Every clip opened takes about 0.7 KB of the heap for a moment (a file object with its own
+// sector buffer on the storage thread, paths and a node): below this largest free block an item
+// is not spoken, so an app near the heap's floor is not pushed over it by speech
+#define SPEECH_HEAP_MIN           4096
 #define SPEECH_FILE_RATE_MIN      8000
 #define SPEECH_FILE_RATE_MAX      32000
 
@@ -54,10 +58,15 @@ struct Speech {
     // Set by any thread, read by the worker
     volatile uint8_t volume;
     volatile bool voice_enabled;
+    // A timed mute, sr voice off with seconds: guarded by mutex, with voice_enabled
+    bool voice_timed;
+    uint32_t voice_on_at; /* tick at which a timed mute ends */
+    volatile bool card_changed; /* a card mounted or removed since the worker last looked */
 
     // Worker thread only
     SpeechPcm pcm;
     uint8_t ring[SPEECH_RING_SIZE];
+    uint8_t ring_silence; /* the ring's silence at this item's volume; set before the DMA runs */
     uint8_t fill_half;
     uint16_t fill_index;
     bool running;
@@ -76,11 +85,15 @@ struct Speech {
     File* voice_file; /* reused for every clip, the missing log and the look for a set */
     bool clip_tried; /* the current item tried to open a clip */
     bool clip_opened; /* and opened at least one */
+    bool card_lost; /* and an open failed with the card not ready or failing */
+    bool missing_failed; /* the set's missing.txt could not be written: not tried again till the
+                            set is resolved again */
     SpeechVoiceState voice;
     char path[SPEECH_VOICE_PATH_MAX];
     uint32_t open_max_ms; /* longest clip open since boot, found or not */
     uint32_t open_last_ms;
     uint32_t muted; /* items completed silently: voice off, or no vocabulary on the card */
+    uint32_t low_memory; /* items completed silently: too little free memory for the clips */
 };
 
 static void speech_lock(Speech* speech) {
@@ -94,6 +107,10 @@ static void speech_unlock(Speech* speech) {
 // Interrupt context
 static void speech_dma_event(bool second_half, void* context) {
     Speech* speech = context;
+    // The half just played is silenced before the worker hears of it: a worker late to refill
+    // it (a slow open, a busy card) then leaves silence where the DMA would play the old audio
+    // again, and a blocked one loops silence. About 20 us every 82 ms
+    memset(&speech->ring[second_half ? SPEECH_HALF : 0], speech->ring_silence, SPEECH_HALF);
     furi_thread_flags_set(speech->thread_id, second_half ? SPEECH_FLAG_HALF1 : SPEECH_FLAG_HALF0);
 }
 
@@ -125,7 +142,10 @@ static bool speech_wait_half_played(Speech* speech, uint8_t half) {
         if(waited >= SPEECH_EVENT_TIMEOUT_MS) return false;
         uint32_t flags = furi_thread_flags_wait(
             wanted | SPEECH_FLAG_STOP, FuriFlagWaitAny, SPEECH_EVENT_TIMEOUT_MS - waited);
-        if(flags & FuriFlagError) return false;
+        // A time-out comes early after a burst of wake-ups by other flags, since the wait takes
+        // the whole time since its start off what is left at every one (furi_thread_flags_wait):
+        // this loop's own clock decides instead, and a mid-word cut is not taken for the end
+        if(flags & FuriFlagError) continue;
         if(speech_superseded(speech)) return false;
         if(flags & wanted) return true;
     }
@@ -266,7 +286,8 @@ static bool speech_item_begin(Speech* speech, const SpeechItem* item) {
         speech->lut_volume = volume;
     }
     speech_pcm_reset(&speech->pcm);
-    memset(speech->ring, speech_pcm_silence(&speech->pcm), SPEECH_RING_SIZE);
+    speech->ring_silence = speech_pcm_silence(&speech->pcm);
+    memset(speech->ring, speech->ring_silence, SPEECH_RING_SIZE);
 
     speech_lock(speech);
     speech->stats.utterances++;
@@ -331,6 +352,7 @@ static void speech_voice_forget(Speech* speech) {
     speech->vocabulary = false;
     speech->set[0] = '\0';
     speech->voice_settings[0] = '\0';
+    speech->missing_failed = false;
 }
 
 // Whether the card has the folder of the set asked for; false when none was asked for
@@ -354,6 +376,12 @@ static void speech_take_voice_set(Speech* speech) {
         speech_voice_forget(speech);
     }
     speech_unlock(speech);
+    // A card mounted or removed since the last item, perhaps another card: the set is resolved
+    // again, as storage_sd_status alone does not tell a card swapped between two items
+    if(speech->card_changed) {
+        speech->card_changed = false;
+        speech_voice_forget(speech);
+    }
 }
 
 /**
@@ -441,7 +469,13 @@ static bool speech_play_clip(Speech* speech, const char* path) {
     if(took > speech->open_max_ms) speech->open_max_ms = took;
     speech->clip_tried = true;
     if(!opened) {
+        FS_Error error = storage_file_get_error(file);
         storage_file_close(file);
+        // Not the word but the card: gone or failing. The item ends, and its words are not missing
+        if(error == FSE_NOT_READY || error == FSE_INTERNAL) {
+            speech->card_lost = true;
+            speech->aborted = true;
+        }
         return false;
     }
     speech->clip_opened = true;
@@ -465,15 +499,19 @@ static bool speech_play_clip(Speech* speech, const char* path) {
  */
 static void speech_spell_word(Speech* speech, const char* word) {
     char name[3];
+    bool played = false; // the letter before played: a gap separates the two
     for(const char* p = word; *p != '\0' && !speech->aborted; p++) {
         if(!speech_voice_letter_clip(*p, name)) continue;
-        if(p != word && !speech_push_silence(speech, SPEECH_VOICE_LETTER_GAP_MS)) return;
-        if(speech_voice_path(speech->set, name, speech->path, sizeof(speech->path)) > 0 &&
-           speech_play_clip(speech, speech->path)) {
+        // After a letter that did not play, as after every letter of a set whose folder has
+        // gone, a gap would only add silence
+        if(played && !speech_push_silence(speech, SPEECH_VOICE_LETTER_GAP_MS)) return;
+        played = speech_voice_path(speech->set, name, speech->path, sizeof(speech->path)) > 0 &&
+                 speech_play_clip(speech, speech->path);
+        if(played) {
             speech->voice.clip_words++;
-            continue;
+        } else if(!speech->card_lost) {
+            speech_voice_missing(&speech->voice, name);
         }
-        speech_voice_missing(&speech->voice, name);
     }
 }
 
@@ -502,7 +540,7 @@ static void speech_speak_words(Speech* speech, bool spell) {
             speech_voice_path(speech->set, word.word, speech->path, sizeof(speech->path)) > 0 &&
             speech_play_clip(speech, speech->path)) {
             speech->voice.clip_words++;
-        } else {
+        } else if(!speech->card_lost) {
             speech->voice.fallback_words++;
             speech_voice_missing(&speech->voice, word.word);
             speech_spell_word(speech, word.word);
@@ -512,34 +550,68 @@ static void speech_speak_words(Speech* speech, bool spell) {
 
 /**
  * Append the words the last utterance lacked to the missing list of the set in use, its
- * missing.txt. When the file cannot be opened the words stay in the log and a later utterance
- * writes them.
+ * missing.txt: the lines built in the file buffer, idle between items, and written at once. The
+ * log is cleared only when all of it reached the card; otherwise (a full or failing card) the
+ * words stay in it, and no item tries again until the set is resolved again.
  */
 static void speech_write_missing(Speech* speech) {
     size_t n = speech_voice_log_count(&speech->voice);
-    if(n == 0) return;
+    if(n == 0 || speech->missing_failed) return;
     if(!speech_voice_set_file(speech->set, "missing.txt", speech->path, sizeof(speech->path))) {
         return;
     }
-    File* file = speech->voice_file;
-    bool opened = storage_file_open(file, speech->path, FSAM_WRITE, FSOM_OPEN_APPEND);
-    if(opened) {
-        for(size_t i = 0; i < n; i++) {
-            const char* w = speech_voice_log_word(&speech->voice, i);
-            storage_file_write(file, w, strlen(w));
-            storage_file_write(file, "\n", 1);
-        }
+    // At most SPEECH_VOICE_LOG_MAX words of SPEECH_VOICE_WORD_MAX - 1 characters, each with its
+    // newline: under half of the buffer
+    size_t len = 0;
+    for(size_t i = 0; i < n; i++) {
+        const char* w = speech_voice_log_word(&speech->voice, i);
+        size_t wl = strlen(w);
+        if(len + wl + 1 > SPEECH_FILE_CHUNK) break;
+        memcpy(&speech->file_buffer[len], w, wl);
+        len += wl;
+        speech->file_buffer[len++] = '\n';
     }
+    File* file = speech->voice_file;
+    bool written = storage_file_open(file, speech->path, FSAM_WRITE, FSOM_OPEN_APPEND) &&
+                   storage_file_write(file, speech->file_buffer, len) == len;
     storage_file_close(file);
-    if(opened) speech_voice_log_clear(&speech->voice);
+    if(written) {
+        speech_voice_log_clear(&speech->voice);
+    } else {
+        speech->missing_failed = true;
+    }
+}
+
+// A timed mute that is over turns the voice on again. Called with the mutex held
+static void speech_voice_expire(Speech* speech, uint32_t now) {
+    if(speech_voice_mute_over(
+           speech->voice_enabled, speech->voice_timed, speech->voice_on_at, now)) {
+        speech->voice_enabled = true;
+        speech->voice_timed = false;
+    }
+}
+
+static bool speech_voice_on(Speech* speech) {
+    speech_lock(speech);
+    speech_voice_expire(speech, furi_get_tick());
+    bool on = speech->voice_enabled;
+    speech_unlock(speech);
+    return on;
 }
 
 static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     speech_take_voice_set(speech);
     // Muted (sr voice off), or no voice set on the card: the item completes at once, without
     // the speaker, a file or the missing list; the voice status counts it
-    if(!speech->voice_enabled || !speech_voice_ready(speech)) {
+    if(!speech_voice_on(speech) || !speech_voice_ready(speech)) {
         speech->muted++;
+        speech_lock(speech);
+        speech->stats.speaking = false;
+        speech_unlock(speech);
+        return;
+    }
+    if(memmgr_heap_get_max_free_block() < SPEECH_HEAP_MIN) {
+        speech->low_memory++;
         speech_lock(speech);
         speech->stats.speaking = false;
         speech_unlock(speech);
@@ -556,14 +628,22 @@ static void speech_speak_item(Speech* speech, const SpeechItem* item) {
     speech->started = furi_get_tick();
     speech->clip_tried = false;
     speech->clip_opened = false;
+    speech->card_lost = false;
     speech_speak_words(speech, spell);
     speech_item_end(speech);
-    speech_write_missing(speech);
-    // Clips tried and not one opened, not even a letter: the set's folder has most likely gone
-    // from the card, so the next item resolves the set again. With the folder there, an item
-    // that tries clips opens one, but for a word with no letter or digit clip to spell it
-    // with, after which the same set is merely resolved again. Nothing on the normal path
-    if(speech->clip_tried && !speech->clip_opened) speech_voice_forget(speech);
+    // The card went, or clips were tried and not one opened, not even a letter: the set's
+    // folder has most likely gone. The next item resolves the set again, and the words this one
+    // could not find are no news: neither written nor remembered as missing. With the folder
+    // there, an item that tries clips opens one, but for a word with no letter or digit clip to
+    // spell it with. Nothing on the normal path
+    if(speech->card_lost || (speech->clip_tried && !speech->clip_opened)) {
+        speech_voice_forget(speech);
+        speech_voice_missing_reset(&speech->voice);
+    } else if(speech_voice_on(speech)) {
+        // Muted meanwhile (sr voice off, around a transfer): the words wait in the log for an
+        // item with the voice on, so that no file is opened once the command has answered
+        speech_write_missing(speech);
+    }
 }
 
 static uint32_t speech_clamp_rate(uint32_t rate) {
@@ -621,15 +701,23 @@ static int32_t speech_worker(void* context) {
     speech->thread_id = furi_thread_get_current_id();
     SpeechItem* item = malloc(sizeof(SpeechItem));
 
+    uint32_t idle_since = furi_get_tick(); // the end of the last item
     while(true) {
-        uint32_t timeout = furi_hal_speaker_is_mine() ? SPEECH_IDLE_RELEASE_MS : FuriWaitForever;
+        // Quiet for a while since the last item: hand the speaker back so beeps and other apps
+        // can use it. Counted from that end, not from the latest wake-up: every key press stops
+        // speech and so wakes this loop, and quick keys would keep the speaker held
+        uint32_t timeout = FuriWaitForever;
+        if(furi_hal_speaker_is_mine()) {
+            uint32_t idle = furi_get_tick() - idle_since;
+            if(idle >= SPEECH_IDLE_RELEASE_MS) {
+                speech_drop_speaker(speech);
+                continue;
+            }
+            timeout = SPEECH_IDLE_RELEASE_MS - idle;
+        }
         uint32_t flags =
             furi_thread_flags_wait(SPEECH_FLAG_WORK | SPEECH_FLAG_STOP, FuriFlagWaitAny, timeout);
-        if(flags & FuriFlagError) {
-            // Quiet for a while: hand the speaker back so beeps and other apps can use it
-            speech_drop_speaker(speech);
-            continue;
-        }
+        if(flags & FuriFlagError) continue;
         // A stop request has already retired the queue on the requesting thread; its flag
         // only wakes this loop, which then finds nothing or what was pushed after the request
         while(speech_pop(speech, item)) {
@@ -638,6 +726,7 @@ static int32_t speech_worker(void* context) {
             } else {
                 speech_speak_item(speech, item);
             }
+            idle_since = furi_get_tick();
         }
     }
     return 0;
@@ -700,7 +789,10 @@ static void speech_push(
     }
     speech->stats.queue_dropped = speech->queue.dropped;
     speech_unlock(speech);
-    furi_thread_flags_set(speech->thread_id, SPEECH_FLAG_WORK);
+    // An interrupting push also wakes a DMA wait, as a stop does, so what it supersedes ends at
+    // once instead of at the next played half, up to 82 ms later
+    furi_thread_flags_set(
+        speech->thread_id, interrupt ? SPEECH_FLAG_WORK | SPEECH_FLAG_STOP : SPEECH_FLAG_WORK);
 }
 
 void speech_say(Speech* speech, const char* text, bool interrupt, bool replaceable) {
@@ -763,20 +855,49 @@ void speech_get_stats(Speech* speech, SpeechStats* out) {
 
 void speech_set_voice_clips(Speech* speech, bool enabled) {
     furi_check(speech);
+    speech_lock(speech);
     speech->voice_enabled = enabled;
+    speech->voice_timed = false;
+    speech_unlock(speech);
+    if(!enabled) speech_stop(speech);
+}
+
+bool speech_mute_voice_for(Speech* speech, uint32_t ms) {
+    furi_check(speech);
+    speech_lock(speech);
+    bool timed = speech->voice_enabled || speech->voice_timed;
+    if(timed) {
+        speech->voice_enabled = false;
+        speech->voice_timed = true;
+        speech->voice_on_at = furi_get_tick() + ms;
+    }
+    speech_unlock(speech);
+    if(timed) speech_stop(speech);
+    return timed;
+}
+
+void speech_voice_card_changed(Speech* speech) {
+    furi_check(speech);
+    speech->card_changed = true;
 }
 
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out) {
     furi_check(speech && out);
+    speech_lock(speech);
+    uint32_t now = furi_get_tick();
+    speech_voice_expire(speech, now);
+    out->enabled = speech->voice_enabled;
+    out->on_in_ms = !speech->voice_enabled && speech->voice_timed ? speech->voice_on_at - now : 0;
+    speech_unlock(speech);
     // The worker owns these counters and writes them one word at a time; 32 bit reads are
     // atomic on this core, so the snapshot is consistent enough for a status line. It writes the
     // names one byte at a time, so a read while a set is resolved shows at worst a mixed name
-    out->enabled = speech->voice_enabled;
     out->vocabulary = speech->vocabulary;
     out->clip_words = *(volatile uint32_t*)&speech->voice.clip_words;
     out->fallback_words = *(volatile uint32_t*)&speech->voice.fallback_words;
     out->missing_words = *(volatile uint32_t*)&speech->voice.missing_words;
     out->muted = *(volatile uint32_t*)&speech->muted;
+    out->low_memory = *(volatile uint32_t*)&speech->low_memory;
     out->open_max_ms = *(volatile uint32_t*)&speech->open_max_ms;
     out->open_last_ms = *(volatile uint32_t*)&speech->open_last_ms;
     strncpy(out->settings, speech->voice_settings, sizeof(out->settings) - 1);

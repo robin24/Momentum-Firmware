@@ -65,11 +65,13 @@ void speech_set_volume(Speech* speech, uint8_t volume);
 typedef struct {
     bool enabled; /**< recorded clips are used when the vocabulary is present;
                        false means muted (sr voice off) */
+    uint32_t on_in_ms; /**< a timed mute's time left, 0 when the mute has no end */
     bool vocabulary; /**< a voice set under /ext/sr/voices was found on the card */
     uint32_t clip_words; /**< words and spelled letters spoken from clips since boot */
     uint32_t fallback_words; /**< words the vocabulary lacked, spelled, since boot */
     uint32_t missing_words; /**< distinct words recorded in the sets' missing.txt since boot */
     uint32_t muted; /**< items completed silently since boot: the voice off, or no vocabulary */
+    uint32_t low_memory; /**< items completed silently since boot for too little free memory */
     uint32_t open_max_ms; /**< longest clip open since boot, found or not */
     uint32_t open_last_ms; /**< the latest clip open */
     char settings[64]; /**< first line of the set's voice.txt, empty when absent */
@@ -79,12 +81,23 @@ typedef struct {
     char wanted[32]; /**< the set asked for, empty for the first found */
 } SpeechVoiceStats;
 
-/** Recorded voice on or off, from the next utterance on. Off mutes: a text item completes at
- *  once, no file is opened, nothing is played, until on again or a reboot; it is the guard the
- *  generator sets around a sync. */
+/** Recorded voice on or off. Off mutes: it stops what is being said, as speech_stop does, and
+ *  from then on a text item completes at once, no file is opened, nothing is played, until on
+ *  again or a reboot; the missing words of a stopped item wait in memory for an item with the
+ *  voice on. speech_is_busy tells when the stopped item has ended. Either ends a timed mute. */
 void speech_set_voice_clips(Speech* speech, bool enabled);
 
+/** Mute as off does, stopping what is being said, for ms only: the voice is on again by itself
+ *  at the first utterance after that. It is the guard the generator sets around a transfer and
+ *  renews as it goes, so a tool that dies cannot leave the reader muted. A voice already off
+ *  without an end stays so, and false is returned; a timed mute is renewed. */
+bool speech_mute_voice_for(Speech* speech, uint32_t ms);
+
 void speech_get_voice_stats(Speech* speech, SpeechVoiceStats* out);
+
+/** A card was mounted or removed: the next utterance resolves the voice set again, so that a
+ *  card swapped between two utterances is noticed. Sets a flag only; any thread. */
+void speech_voice_card_changed(Speech* speech);
 
 /** Use the voice set of that name, a folder under /ext/sr/voices, from the next utterance on.
  *  An empty name, or a name whose folder the card lacks, means the first set found in name

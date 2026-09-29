@@ -364,7 +364,8 @@ class AppBuildset:
         excluded = [
             app
             for app in extapps
-            if app.appid in self._exclude_apps or app.fap_category in self._exclude_categories
+            if app.appid in self._exclude_apps
+            or app.fap_category in self._exclude_categories
         ]
         if excluded:
             extapps = [app for app in extapps if app not in excluded]

@@ -1,6 +1,6 @@
 /**
  * @file speech_hw.h
- * TIM16 as a 50 kHz PWM carrier on the speaker pin, fed by DMA2 channel 4 from a circular
+ * TIM16 as a 50 kHz PWM carrier on the speaker pin, fed by DMA1 channel 3 from a circular
  * byte buffer. The speaker must already be acquired (furi_hal_speaker_acquire) by the caller.
  */
 #pragma once

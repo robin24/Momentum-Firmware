@@ -47,16 +47,13 @@ bool speech_voice_next_word(const char* text, size_t* pos, SpeechVoiceWord* out)
 /** FNV-1a, 32 bit, over the bytes of a word: the clip folder and the missing-word set. */
 uint32_t speech_voice_hash(const char* word);
 
-/** True for a set name the card and the settings can hold: 1 to SPEECH_VOICE_SET_MAX - 1
- *  characters, each a lower case letter, a digit, a hyphen or an underscore. The name auto is
- *  not one: it is reserved for the first set found (sr voice use auto). */
-bool speech_voice_set_valid(const char* name);
-
 /** True for a folder under SPEECH_VOICE_SETS_DIR that the engine lists and takes as a set, and
  *  for a saved set name it accepts: 1 to SPEECH_VOICE_SET_MAX - 1 characters, not starting with
  *  a dot (a hidden folder), and neither a slash nor a backslash in it (the card's filesystem
- *  splits paths at both). Looser than speech_voice_set_valid, as a folder made by hand may use
- *  other characters. The engine treats a saved name that is not one as empty. */
+ *  splits paths at both). The generator makes sets of lower case letters, digits, hyphens and
+ *  underscores, but a folder made by hand may use other characters, and sr voice use and the
+ *  settings app take the same names as the engine. The engine treats a saved name that is not
+ *  one as empty; sr voice use keeps the name auto for the first set found. */
 bool speech_voice_set_listable(const char* name);
 
 /** The fallback's order: true when current is empty or candidate sorts before it by strcmp.
@@ -65,7 +62,7 @@ bool speech_voice_set_before(const char* candidate, const char* current);
 
 /** SPEECH_VOICE_SETS_DIR "/<set>/<file>", or the set's folder itself for an empty file name.
  *  Returns the length written, 0 for an empty set or a buffer too small. The set is not
- *  validated here: the callers pass names that came through speech_voice_set_valid or from
+ *  validated here: the callers pass names that came through speech_voice_set_listable or from
  *  the card's own folder listing. */
 size_t speech_voice_set_file(const char* set, const char* file, char* out, size_t out_size);
 
@@ -107,6 +104,12 @@ void speech_voice_log_clear(SpeechVoiceState* state);
  *  is recorded once more: the worker calls it when it resolves a different set than before,
  *  whose missing list has none of them. The counters since boot keep their values. */
 void speech_voice_missing_reset(SpeechVoiceState* state);
+
+/** Whether a timed mute (sr voice off with a number of seconds) is over at tick now: the voice
+ *  is off for that mute only, and on_at, the tick at which it ends, has come, across a wrap of
+ *  the tick counter too. The worker then turns the voice on again, so a tool that dies during a
+ *  transfer cannot leave the reader muted. */
+bool speech_voice_mute_over(bool enabled, bool timed, uint32_t on_at, uint32_t now);
 
 #ifdef __cplusplus
 }

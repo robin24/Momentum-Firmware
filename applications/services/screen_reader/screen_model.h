@@ -95,6 +95,8 @@ typedef struct {
     uint8_t content_layer;
     bool has_content; /**< at least one record outside the status bar */
     bool has_keyboard; /**< at least one record in the keyboard font */
+    bool on_keyboard; /**< the focus is a key in the keyboard font: an on-screen keyboard, whose
+                           prompt and field are read before the key */
     bool overflow;
 } SrScreen;
 

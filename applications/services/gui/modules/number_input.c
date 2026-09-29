@@ -1,6 +1,7 @@
 #include "number_input.h"
 
 #include <gui/elements.h>
+#include <gui/canvas_i.h>
 #include <furi.h>
 #include <assets_icons.h>
 #include <lib/toolbox/strint.h>
@@ -237,6 +238,17 @@ static void number_input_handle_ok(NumberInputModel* model) {
     }
 }
 
+/** The name of an icon key, for the screen reader; NULL for a digit, which it reads */
+static const char* number_input_key_name(NumberInputModel* model, char key) {
+    if(key == enter_symbol) {
+        return is_number_too_small(model) || is_number_too_large(model) ? "Save, out of range" :
+                                                                          "Save";
+    }
+    if(key == backspace_symbol) return "Backspace";
+    if(key == sign_symbol) return "Change sign";
+    return NULL;
+}
+
 static void number_input_view_draw_callback(Canvas* canvas, void* _model) {
     NumberInputModel* model = _model;
 
@@ -255,6 +267,16 @@ static void number_input_view_draw_callback(Canvas* canvas, void* _model) {
         for(size_t column = 0; column < column_count; column++) {
             if(keys[column].text == sign_symbol && !number_input_use_sign(model)) {
                 continue;
+            }
+
+            const char* name = number_input_key_name(model, keys[column].text);
+            if(name && model->selected_row == row && model->selected_column == column) {
+                canvas_tap_hint_focus(canvas, 0, 0);
+                canvas_tap_note(
+                    canvas,
+                    keyboard_origin_x + keys[column].x,
+                    keyboard_origin_y + keys[column].y,
+                    name);
             }
 
             if(keys[column].text == enter_symbol) {
@@ -325,6 +347,7 @@ static void number_input_view_draw_callback(Canvas* canvas, void* _model) {
                         11,
                         13);
                     canvas_set_color(canvas, ColorWhite);
+                    canvas_tap_hint_focus(canvas, 0, 0);
                 }
 
                 canvas_draw_glyph(

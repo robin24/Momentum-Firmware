@@ -138,8 +138,11 @@ static void canvas_tap_glyph(Canvas* canvas, int32_t x, int32_t y, uint16_t ch) 
         canvas->tap_hint_full = false;
         return;
     }
+    // A control character draws nothing: elements_text_box counts each line's newline, and the
+    // last line's terminator, among the glyphs it draws. Recorded, they read as question marks
+    if(ch < 0x20) return;
     canvas->tap_hint_full = false;
-    if(ch < 0x20 || ch > 0x7E) ch = '?';
+    if(ch > 0x7E) ch = '?';
     bool inverted = canvas_tap_logical_inverted(canvas);
     bool continues =
         canvas->tap_run_active && !canvas->tap_hint_focus && !canvas->tap_hint_button &&

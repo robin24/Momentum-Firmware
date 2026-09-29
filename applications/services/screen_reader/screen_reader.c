@@ -56,6 +56,9 @@ struct ScreenReader {
     bool capturing;
     bool turned_on; // the setting went from off to on; cleared when a frame is handed over
     SrFrame filling;
+    // Set by frame_end when it could not hand a frame over, taken by the service thread, which
+    // then asks for the screen again: a screen that stays still after it would not be read
+    bool frame_dropped;
 
     // Shared, guarded by mutex
     SrFrame ready;
@@ -76,7 +79,7 @@ struct ScreenReader {
 
     // Chords: the state belongs to the input filter. A command waits here for the service
     // thread, which takes it with an atomic exchange: the latest one wins, none runs twice
-    SrChords chords;
+    SrChordSources chords; // the keys' and the console's input send's apart
     uint8_t pending_command;
 
     // The desktop's lock state, for "Locked" and "Unlocked"; subscribed once the desktop record
@@ -162,6 +165,8 @@ static void sr_frame_end(void* context, uint8_t content_layer) {
         furi_thread_flags_set(sr->thread_id, SR_FLAG_FRAME);
     } else {
         sr->stats.dropped_frames++;
+        __atomic_store_n(&sr->frame_dropped, true, __ATOMIC_SEQ_CST);
+        furi_thread_flags_set(sr->thread_id, SR_FLAG_FRAME);
     }
 }
 
@@ -198,8 +203,9 @@ void screen_reader_run_command(ScreenReader* sr, SrChordCommand command) {
 static void sr_input_filter(const InputEvent* event, InputFilterResult* result, void* context) {
     ScreenReader* sr = context;
     bool drop = false, emit_long = false;
-    SrChordCommand command = sr_chords_feed(
+    SrChordCommand command = sr_chord_sources_feed(
         &sr->chords,
+        event->sequence_source,
         momentum_settings.screen_reader,
         event->key,
         event->type,
@@ -272,14 +278,17 @@ static void sr_subscribe_dolphin(ScreenReader* sr) {
 }
 
 // A storage thread, on card events (a mount is published from a helper thread the storage
-// service starts). Only a flag, and only for a mount: when the card was not
-// ready as the dolphin started, it loads its state on the mount and publishes nothing, so the
-// level the reader noted may be stale
+// service starts). Only flags. A mount: when the card was not ready as the dolphin started, it
+// loads its state on the mount and publishes nothing, so the level the reader noted may be stale.
+// A mount or a removal: the speech engine resolves its voice set again
 static void sr_storage_callback(const void* message, void* context) {
     const StorageEvent* event = message;
     ScreenReader* sr = context;
     if(event->type == StorageEventTypeCardMount) {
         furi_thread_flags_set(sr->thread_id, SR_FLAG_STORAGE);
+    }
+    if(event->type == StorageEventTypeCardMount || event->type == StorageEventTypeCardUnmount) {
+        speech_voice_card_changed(sr->speech);
     }
 }
 
@@ -552,10 +561,11 @@ static void sr_run_command(ScreenReader* sr, SrChordCommand command) {
         if(v < 0) v = 0;
         if(v > 100) v = 100;
         momentum_settings.sr_volume = (uint32_t)v;
-        momentum_settings_save();
         speech_set_volume(sr->speech, (uint8_t)v);
         snprintf(text, SR_DESCRIBE_TEXT_MAX, "Volume %d", v);
         speech_say(sr->speech, text, true, false);
+        // Saved once the feedback is queued, so it does not wait for the file to be written
+        momentum_settings_save();
         break;
     }
     default:
@@ -591,10 +601,10 @@ static bool sr_model_screen_quietly(ScreenReader* sr) {
 // and on every screen, the lock screen and the PIN entry included, where Back with Down means
 // nothing else: it is how a user who boots into a lock with the reader off gets speech back.
 // Off: the reader goes off as sr off turns it off, then "Screen reader off" is said by the engine
-// itself, as sr say is. On: the setting saved, the screen modelled quietly, then one utterance in
+// itself, as sr say is. On: the setting on, the screen modelled quietly, then one utterance in
 // parts, "Screen reader on. " first and the screen as Back and Up reads it right after; "Screen
-// reader on" alone when no frame came. A change held from before either would be read after it,
-// from a screen long gone
+// reader on" alone when no frame came; the setting is saved after that. A change held from before
+// either would be read after it, from a screen long gone
 static void sr_toggle(ScreenReader* sr) {
     sr_throttle_clear(&sr->throttle);
     if(momentum_settings.screen_reader) {
@@ -605,7 +615,6 @@ static void sr_toggle(ScreenReader* sr) {
         return;
     }
     momentum_settings.screen_reader = true;
-    momentum_settings_save();
     char* text = malloc(SR_DESCRIBE_TEXT_MAX);
     size_t n = strlcpy(text, "Screen reader on. ", SR_DESCRIBE_TEXT_MAX);
     if(sr_model_screen_quietly(sr)) {
@@ -616,6 +625,8 @@ static void sr_toggle(ScreenReader* sr) {
     sr_push_voice_set(sr);
     speech_say_parts(sr->speech, text);
     free(text);
+    // Saved once the confirmation is queued, as the volume is
+    momentum_settings_save();
 }
 
 void screen_reader_get_frame(ScreenReader* sr, SrFrame* out) {
@@ -694,7 +705,7 @@ int32_t screen_reader_srv(void* p) {
 
     sr->input_events = furi_record_open(RECORD_INPUT_EVENTS);
     sr->input_subscription = furi_pubsub_subscribe(sr->input_events, sr_input_callback, sr);
-    sr_chords_init(&sr->chords);
+    sr_chord_sources_init(&sr->chords);
     input_set_filter(sr_input_filter, sr);
 
     sr->gui = furi_record_open(RECORD_GUI);
@@ -735,6 +746,8 @@ int32_t screen_reader_srv(void* p) {
             timeout = SR_SUBSCRIBE_POLL_MS;
         }
         uint32_t flags = furi_thread_flags_wait(SR_FLAG_ALL, FuriFlagWaitAny, timeout);
+        // The mutex is free here: a frame dropped at the hand-over is drawn again
+        if(__atomic_exchange_n(&sr->frame_dropped, false, __ATOMIC_SEQ_CST)) gui_update(sr->gui);
         sr_subscribe_desktop(sr);
         sr_subscribe_dolphin(sr);
         // A key press drops a held change before the frame the key causes is modelled

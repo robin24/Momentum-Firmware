@@ -13,7 +13,11 @@
 #include <momentum/settings.h>
 #include <storage/storage.h>
 
-// sr voice use saves a name that passed speech_voice_set_valid: the setting holds any such whole
+// The longest timed mute, sr voice off with seconds: an hour
+#define SR_VOICE_OFF_MAX_S 3600
+
+// sr voice use saves a name the engine lists (speech_voice_set_listable): the setting holds any
+// such whole
 _Static_assert(
     SR_VOICE_SET_LEN == SPEECH_VOICE_SET_MAX,
     "the voice set setting must fit a set name");
@@ -102,7 +106,7 @@ static void sr_cli_usage(void) {
         SR_CHANGE_MS_MAX);
     printf("  play <path> [rate]  raw 8 bit mono clip from the card, 8000..32000 Hz (16000)\r\n");
     printf(
-        "  voice on|off|status|list|use <set>  recorded word clips from the card; off mutes speech until on or a reboot; use picks the set (saved)\r\n");
+        "  voice on|off [s]|status|list|use <set>  recorded word clips from the card; off mutes speech until on or a reboot, or for s seconds; use picks the set (saved)\r\n");
     printf(
         "  chord up|down|ok|okhold|downhold|left|right  what Back plus that key does: screen,\r\n"
         "               status bar, focus, focus spelled, reader off or on (also while it is off),\r\n"
@@ -149,9 +153,17 @@ static void sr_cli_print_voice(ScreenReader* sr) {
     // The set asked for is named too when it is not the one in use: its folder is not on the
     // card (the engine took the first set found), or there is no set or no card at all
     bool differs = v.wanted[0] != '\0' && strcmp(v.wanted, v.set) != 0;
+    // A timed mute says how long it has left, rounded up
+    char state[32] = "on";
+    if(!v.enabled && v.on_in_ms) {
+        snprintf(
+            state, sizeof(state), "off for %lu s more", (unsigned long)((v.on_in_ms + 999) / 1000));
+    } else if(!v.enabled) {
+        snprintf(state, sizeof(state), "off");
+    }
     printf(
-        "voice: %s, vocabulary %s set %s%s%s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, open max %lu ms, last %lu ms\r\n",
-        v.enabled ? "on" : "off",
+        "voice: %s, vocabulary %s set %s%s%s%s%s, clips %lu, fallback %lu, missing %lu, muted %lu, low memory %lu, open max %lu ms, last %lu ms\r\n",
+        state,
         v.vocabulary ? "yes" : "no",
         v.set[0] ? v.set : "none",
         differs ? " wanted " : "",
@@ -162,6 +174,7 @@ static void sr_cli_print_voice(ScreenReader* sr) {
         (unsigned long)v.fallback_words,
         (unsigned long)v.missing_words,
         (unsigned long)v.muted,
+        (unsigned long)v.low_memory,
         (unsigned long)v.open_max_ms,
         (unsigned long)v.open_last_ms);
 }
@@ -192,20 +205,21 @@ static bool sr_cli_voice_set_exists(const char* set) {
     return exists;
 }
 
-// sr voice use <set>: a set on the card, or auto for the first found (the setting emptied).
+// sr voice use <set>: a set on the card, any name that sr voice list shows and the settings app
+// offers, in quotes when it has a space; or auto for the first found (the setting emptied).
 // Saved, and passed to the engine at once, which resolves the set afresh at the next utterance,
 // also for the name already in use: a set synced again, or back after a fallback, is taken
 static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
     FuriString* name = furi_string_alloc();
     do {
-        if(!args_read_string_and_trim(args, name)) {
+        if(!args_read_probably_quoted_string_and_trim(args, name)) {
             printf("sr voice use <set>|auto\r\n");
             break;
         }
         const char* set = furi_string_get_cstr(name);
         if(strcmp(set, "auto") == 0) {
             set = "";
-        } else if(!speech_voice_set_valid(set) || !sr_cli_voice_set_exists(set)) {
+        } else if(!speech_voice_set_listable(set) || !sr_cli_voice_set_exists(set)) {
             printf("no such voice set: %s\r\n", set);
             break;
         }
@@ -221,6 +235,13 @@ static void sr_cli_voice_use(ScreenReader* sr, FuriString* args) {
     furi_string_free(name);
 }
 
+// The item being spoken when the voice goes off stops at its next sample; the command answers
+// once it has ended, at most a second later, so that no clip is opened after the answer
+static void sr_cli_wait_idle(Speech* speech) {
+    for(int i = 0; i < 100 && speech_is_busy(speech); i++)
+        furi_delay_ms(10);
+}
+
 static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
     FuriString* sub = furi_string_alloc();
     bool has = args_read_string_and_trim(args, sub);
@@ -228,8 +249,25 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
         speech_set_voice_clips(screen_reader_get_speech(sr), true);
         printf("voice on\r\n");
     } else if(has && furi_string_cmp_str(sub, "off") == 0) {
-        speech_set_voice_clips(screen_reader_get_speech(sr), false);
-        printf("voice off: muted until sr voice on or a reboot\r\n");
+        // With seconds, the guard the generator sets around a transfer and renews as it goes:
+        // the voice comes back by itself if the tool dies. A voice already off without an end
+        // stays so
+        Speech* speech = screen_reader_get_speech(sr);
+        int seconds = 0;
+        if(furi_string_empty(args)) {
+            speech_set_voice_clips(speech, false);
+            sr_cli_wait_idle(speech);
+            printf("voice off: muted until sr voice on or a reboot\r\n");
+        } else if(
+            !args_read_int_and_trim(args, &seconds) || seconds < 1 ||
+            seconds > SR_VOICE_OFF_MAX_S) {
+            printf("sr voice off [1..%d seconds]\r\n", SR_VOICE_OFF_MAX_S);
+        } else if(speech_mute_voice_for(speech, (uint32_t)seconds * 1000)) {
+            sr_cli_wait_idle(speech);
+            printf("voice off for %d s, then on again by itself\r\n", seconds);
+        } else {
+            printf("voice off: muted until sr voice on or a reboot\r\n");
+        }
     } else if(!has || furi_string_cmp_str(sub, "status") == 0) {
         sr_cli_print_voice(sr);
     } else if(furi_string_cmp_str(sub, "list") == 0) {
@@ -237,7 +275,7 @@ static void sr_cli_voice(ScreenReader* sr, FuriString* args) {
     } else if(furi_string_cmp_str(sub, "use") == 0) {
         sr_cli_voice_use(sr, args);
     } else {
-        printf("sr voice on|off|status|list|use <set>\r\n");
+        printf("sr voice on|off [seconds]|status|list|use <set>\r\n");
     }
     furi_string_free(sub);
 }
@@ -322,6 +360,10 @@ static void sr_cli_play(ScreenReader* sr, FuriString* args) {
     do {
         if(!args_read_probably_quoted_string_and_trim(args, path)) {
             printf("play what? sr play <path> [rate]\r\n");
+            break;
+        }
+        if(furi_string_size(path) >= SPEECH_ITEM_TEXT_MAX) {
+            printf("the path is too long: at most %d characters\r\n", SPEECH_ITEM_TEXT_MAX - 1);
             break;
         }
         int rate = 16000;
@@ -452,9 +494,15 @@ static void sr_cli_execute(PipeSide* pipe, FuriString* args, void* context) {
     furi_string_free(cmd);
 }
 
+// Each run of the command gets a thread with this stack, for the whole of an sr watch session.
+// The deepest path by GCC's call graph, a number printed through the console pipe, needs about
+// 1.3 KB, and about 1.6 KB with an interrupt's frame; the default would be 4 KB.
+#define SR_CLI_STACK_SIZE 2048
+
 void screen_reader_cli_register(ScreenReader* sr) {
     CliRegistry* registry = furi_record_open(RECORD_CLI);
-    cli_registry_add_command(registry, "sr", CliCommandFlagParallelSafe, sr_cli_execute, sr);
+    cli_registry_add_command_ex(
+        registry, "sr", CliCommandFlagParallelSafe, sr_cli_execute, sr, SR_CLI_STACK_SIZE);
     furi_record_close(RECORD_CLI);
 }
 

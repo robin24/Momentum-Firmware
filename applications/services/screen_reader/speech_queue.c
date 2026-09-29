@@ -1,5 +1,6 @@
 #include "speech_queue.h"
 
+#include <stdbool.h>
 #include <string.h>
 
 void speech_queue_init(SpeechQueue* queue) {
@@ -10,9 +11,26 @@ static SpeechItem* tail(SpeechQueue* queue) {
     return &queue->items[(queue->head + queue->count - 1) % SPEECH_QUEUE_CAPACITY];
 }
 
-/** The first n characters of text, cut to what an item holds. */
-static void set_text(SpeechItem* item, const char* text, size_t n) {
-    if(n > SPEECH_ITEM_TEXT_MAX - 1) n = SPEECH_ITEM_TEXT_MAX - 1;
+static bool is_word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '\'';
+}
+
+/** The first n characters of text, cut to what an item holds. A text is cut after its last whole
+ *  word that fits, as a word cut in two would be spelled and logged as a missing word; one word
+ *  longer than an item, and a file's path, keep the plain cut. */
+static void set_text(SpeechItem* item, const char* text, size_t n, bool file) {
+    const size_t max = SPEECH_ITEM_TEXT_MAX - 1;
+    if(n > max) {
+        n = max;
+        if(!file && is_word_char(text[max]) && is_word_char(text[max - 1])) {
+            size_t j = max;
+            while(j > 0 && is_word_char(text[j - 1]))
+                j--;
+            while(j > 0 && text[j - 1] == ' ')
+                j--;
+            if(j > 0) n = j;
+        }
+    }
     memcpy(item->text, text, n);
     item->text[n] = '\0';
 }
@@ -48,7 +66,7 @@ static void push_item(
     item->file = file;
     item->spell = spell;
     item->rate = rate;
-    set_text(item, text, len);
+    set_text(item, text, len, file);
 }
 
 void speech_queue_push(SpeechQueue* queue, const char* text, bool interrupt, bool replaceable) {

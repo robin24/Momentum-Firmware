@@ -7,7 +7,28 @@
 // baseline at y=60, so only y=61 and below is a button by geometry.
 #define SR_BUTTON_ROW_Y    61
 #define SR_TITLE_MAX_Y     26
+// On an on-screen keyboard the prompt is the top line (y 8 or 9, in the secondary font); the field
+// below it (y 22 to 25) is read as the value, never as the title
+#define SR_PROMPT_MAX_Y    12
 #define SR_SPONTANEOUS_MAX 80
+
+static bool sr_is_word_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '\'';
+}
+
+/** out was cut short after len characters, next being the first left out: when that split a
+ *  word, the text ends before the word, so speech never gets a fragment to spell and to log as a
+ *  missing word. One word longer than the whole buffer keeps its cut. */
+static void sr_cut_at_word(char* out, size_t len, char next) {
+    if(len == 0 || !sr_is_word_char(next) || !sr_is_word_char(out[len - 1])) return;
+    size_t j = len;
+    while(j > 0 && sr_is_word_char(out[j - 1]))
+        j--;
+    if(j == 0) return;
+    while(j > 0 && out[j - 1] == ' ')
+        j--;
+    out[j] = '\0';
+}
 
 static void sr_copy(char* out, size_t out_size, const char* in) {
     if(out_size == 0) return;
@@ -17,12 +38,19 @@ static void sr_copy(char* out, size_t out_size, const char* in) {
         i++;
     }
     out[i] = '\0';
+    sr_cut_at_word(out, i, in[i]);
 }
 
 static void sr_append(char* out, size_t out_size, const char* in) {
     size_t len = strlen(out);
     if(len + 1 >= out_size) return;
-    sr_copy(out + len, out_size - len, in);
+    size_t i = 0;
+    while(len + i + 1 < out_size && in[i] != '\0') {
+        out[len + i] = in[i];
+        i++;
+    }
+    out[len + i] = '\0';
+    sr_cut_at_word(out, len + i, in[i]);
 }
 
 void sr_normalize(const char* in, char* out, size_t out_size) {
@@ -167,10 +195,22 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
 
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* c = &screen->rows[i];
-        if(c->kind == SrRowNormal && !c->note && c->font == SrFontPrimary &&
-           c->y <= SR_TITLE_MAX_Y) {
+        if(c->kind == SrRowFocus && c->font == SrFontKeyboard) screen->on_keyboard = true;
+        if(screen->title_row < 0 && c->kind == SrRowNormal && !c->note &&
+           c->font == SrFontPrimary && c->y <= SR_TITLE_MAX_Y) {
             screen->title_row = (int8_t)i;
-            break;
+        }
+    }
+    // The keyboards (text_input, byte_input, number_input) draw their prompt in the secondary
+    // font: on a keyboard without a title in the primary font, the top line is the title
+    if(screen->on_keyboard && screen->title_row < 0) {
+        for(uint8_t i = 0; i < screen->row_count; i++) {
+            const SrRow* c = &screen->rows[i];
+            if(c->kind == SrRowNormal && !c->note && c->font != SrFontKeyboard &&
+               c->y <= SR_PROMPT_MAX_Y) {
+                screen->title_row = (int8_t)i;
+                break;
+            }
         }
     }
 }
@@ -281,6 +321,9 @@ size_t sr_screen_describe(const SrScreen* screen, char* out, size_t out_size) {
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* row = &screen->rows[i];
         if(row->kind != SrRowNormal || (int8_t)i == screen->title_row) continue;
+        // On an on-screen keyboard the rows of keys, drawn one character at a time with no
+        // space between, would read as words such as "qwertyuiop": the key is the focus
+        if(screen->on_keyboard && row->font == SrFontKeyboard) continue;
         if(out[0] != '\0') sr_append(out, out_size, ". ");
         sr_append(out, out_size, row->text);
     }
@@ -332,6 +375,15 @@ static bool sr_screen_has_rows(const SrScreen* screen) {
     return false;
 }
 
+static bool sr_same_ignoring_case(const char* a, const char* b) {
+    for(; *a && *b; a++, b++) {
+        char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a - 'A' + 'a') : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? (char)(*b - 'A' + 'a') : *b;
+        if(ca != cb) return false;
+    }
+    return *a == *b;
+}
+
 static const char* sr_title_text(const SrScreen* screen) {
     return screen->title_row >= 0 ? screen->rows[screen->title_row].text : "";
 }
@@ -341,11 +393,14 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
     if(prev->has_content != cur->has_content) return true;
     if(strcmp(sr_title_text(prev), sr_title_text(cur)) != 0) return true;
     // Fewer than half of the previous rows still present, ignoring their roles: a list
-    // that scrolled by one keeps most rows, a new screen keeps almost none.
+    // that scrolled by one keeps most rows, a new screen keeps almost none. On a keyboard the
+    // rows of keys do not count: they change case when the field empties or fills
+    bool keyboard = prev->on_keyboard && cur->on_keyboard;
     unsigned total = 0, kept = 0;
     for(uint8_t i = 0; i < prev->row_count; i++) {
         const SrRow* row = &prev->rows[i];
         if(row->kind == SrRowStatus) continue;
+        if(keyboard && row->font == SrFontKeyboard) continue;
         total++;
         if(sr_screen_has_text(cur, row->text)) kept++;
     }
@@ -355,52 +410,98 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
 static void
     sr_screen_announcement(const SrModel* model, const SrScreen* s, char* out, size_t out_size) {
     out[0] = '\0';
+    // The buttons, and the overflow's words, come last but are built first, and the text keeps
+    // room for them: a long dialog loses the end of its text, never what its buttons do
+    char buttons[SR_ANN_TEXT_MAX] = "";
+    if(model->verbosity >= 1) sr_append_buttons(s, buttons, sizeof(buttons));
+    const char* more = s->overflow ? ", and more" : "";
+    size_t keep = strlen(buttons) + (buttons[0] != '\0' ? 2 : 0) + strlen(more);
+    size_t size = out_size > keep + 1 ? out_size - keep : 1;
+
     char focus[SR_ANN_TEXT_MAX];
     sr_screen_focus_text(s, focus, sizeof(focus));
-    if(s->title_row >= 0) sr_append(out, out_size, sr_title_text(s));
+    if(s->title_row >= 0) sr_append(out, size, sr_title_text(s));
     if(focus[0] != '\0') {
-        if(out[0] != '\0') sr_append(out, out_size, ". ");
-        sr_append(out, out_size, focus);
-        if(model->verbosity >= 2) sr_append_focus_position(s, out, out_size);
+        // An on-screen keyboard: the field, and any other line that is not a key, before the key
+        for(uint8_t i = 0; s->on_keyboard && i < s->row_count; i++) {
+            const SrRow* row = &s->rows[i];
+            if(row->kind != SrRowNormal || row->font == SrFontKeyboard) continue;
+            if((int8_t)i == s->title_row) continue;
+            if(out[0] != '\0') sr_append(out, size, ". ");
+            sr_append(out, size, row->text);
+        }
+        if(out[0] != '\0') sr_append(out, size, ". ");
+        sr_append(out, size, focus);
+        if(model->verbosity >= 2) sr_append_focus_position(s, out, size);
     } else {
         for(uint8_t i = 0; i < s->row_count; i++) {
             const SrRow* row = &s->rows[i];
             if(row->kind != SrRowNormal || (int8_t)i == s->title_row) continue;
-            if(out[0] != '\0') sr_append(out, out_size, ". ");
-            sr_append(out, out_size, row->text);
+            if(out[0] != '\0') sr_append(out, size, ". ");
+            sr_append(out, size, row->text);
         }
     }
-    if(model->verbosity >= 1) sr_append_buttons(s, out, out_size);
-    if(s->overflow) sr_append(out, out_size, ", and more");
+    if(buttons[0] != '\0') {
+        if(out[0] != '\0') sr_append(out, out_size, ". ");
+        sr_append(out, out_size, buttons);
+    }
+    sr_append(out, out_size, more);
+}
+
+/** A field's row, not a key's: normal text outside the keyboard font */
+static bool sr_row_is_field(const SrRow* row) {
+    return row->kind == SrRowNormal && row->font != SrFontKeyboard;
+}
+
+/** The field row of screen s on the baseline of row, or NULL */
+static const SrRow* sr_field_row_at(const SrScreen* s, const SrRow* row) {
+    for(uint8_t i = 0; i < s->row_count; i++) {
+        const SrRow* r = &s->rows[i];
+        if(!sr_row_is_field(r)) continue;
+        if((r->y - row->y) > SR_ROW_Y_TOLERANCE || (row->y - r->y) > SR_ROW_Y_TOLERANCE) continue;
+        return r;
+    }
+    return NULL;
+}
+
+/** One character more or less in a field: now grew from was by the character written to out, or
+ *  lost its last one ("deleted"). An empty field draws no row, so a row missing on one side is
+ *  empty text: the first character typed into an empty field, or its last one deleted. */
+static bool sr_typed_in(const char* now, const char* was, char* out, size_t out_size) {
+    size_t ln = strlen(now), lw = strlen(was);
+    if(ln == lw + 1 && strncmp(now, was, lw) == 0) {
+        char c = now[lw];
+        if(c == ' ') {
+            sr_copy(out, out_size, "space");
+        } else {
+            out[0] = c;
+            out[1] = '\0';
+        }
+        return true;
+    }
+    if(lw == ln + 1 && strncmp(now, was, ln) == 0) {
+        sr_copy(out, out_size, "deleted");
+        return true;
+    }
+    return false;
 }
 
 static bool
     sr_typed_character(const SrScreen* prev, const SrScreen* cur, char* out, size_t out_size) {
     if(!cur->has_keyboard || !prev->has_keyboard) return false;
+    // A field, never a row of keys: a key row gains a character when the selection leaves one
+    // of its keys (the number input's "5678" becomes "56789" once the 9 is not selected)
     for(uint8_t i = 0; i < cur->row_count; i++) {
         const SrRow* now = &cur->rows[i];
-        if(now->kind != SrRowNormal) continue;
-        for(uint8_t j = 0; j < prev->row_count; j++) {
-            const SrRow* was = &prev->rows[j];
-            if(was->kind != SrRowNormal) continue;
-            if((now->y - was->y) > SR_ROW_Y_TOLERANCE || (was->y - now->y) > SR_ROW_Y_TOLERANCE)
-                continue;
-            size_t ln = strlen(now->text), lw = strlen(was->text);
-            if(ln == lw + 1 && strncmp(now->text, was->text, lw) == 0) {
-                char c = now->text[lw];
-                if(c == ' ') {
-                    sr_copy(out, out_size, "space");
-                } else {
-                    out[0] = c;
-                    out[1] = '\0';
-                }
-                return true;
-            }
-            if(lw == ln + 1 && strncmp(now->text, was->text, ln) == 0) {
-                sr_copy(out, out_size, "deleted");
-                return true;
-            }
-        }
+        if(!sr_row_is_field(now)) continue;
+        const SrRow* was = sr_field_row_at(prev, now);
+        if(sr_typed_in(now->text, was ? was->text : "", out, out_size)) return true;
+    }
+    // A field whose last character was deleted: its row is gone
+    for(uint8_t j = 0; j < prev->row_count; j++) {
+        const SrRow* was = &prev->rows[j];
+        if(!sr_row_is_field(was) || sr_field_row_at(cur, was)) continue;
+        if(sr_typed_in("", was->text, out, out_size)) return true;
     }
     return false;
 }
@@ -444,7 +545,12 @@ size_t sr_model_process(
         char focus_was[SR_ANN_TEXT_MAX];
         sr_screen_focus_text(cur, focus_now, sizeof(focus_now));
         sr_screen_focus_text(&model->prev, focus_was, sizeof(focus_was));
-        if(focus_now[0] != '\0' && strcmp(focus_now, focus_was) != 0) {
+        // On a keyboard a key is the same key in either case: the keys change case when the
+        // field empties or fills, and the character typed is the news then
+        bool same_focus = strcmp(focus_now, focus_was) == 0 ||
+                          (cur->on_keyboard && model->prev.on_keyboard &&
+                           sr_same_ignoring_case(focus_now, focus_was));
+        if(focus_now[0] != '\0' && !same_focus) {
             sr_copy(text, sizeof(text), focus_now);
             if(model->verbosity >= 2) sr_append_focus_position(cur, text, sizeof(text));
             sr_emit(out, out_max, &n, SrAnnFocus, true, text);
@@ -455,6 +561,9 @@ size_t sr_model_process(
             for(uint8_t i = 0; i < cur->row_count; i++) {
                 const SrRow* row = &cur->rows[i];
                 if(row->kind != SrRowNormal) continue;
+                // On an on-screen keyboard the rows in its font are keys, or digits drawn one by
+                // one (the byte input's, whose value a note says): no news in themselves
+                if(cur->on_keyboard && row->font == SrFontKeyboard) continue;
                 if(sr_screen_has_text(&model->prev, row->text)) continue;
                 if(text[0] != '\0') sr_append(text, sizeof(text), ". ");
                 sr_append(text, sizeof(text), row->text);
@@ -463,7 +572,9 @@ size_t sr_model_process(
                 // Every change is reported: the service says them at most once per change
                 // delay, always the latest (sr_throttle.h). Without a recent key the text is cut
                 if(!key_recent && strlen(text) > SR_SPONTANEOUS_MAX) {
+                    char next = text[SR_SPONTANEOUS_MAX];
                     text[SR_SPONTANEOUS_MAX] = '\0';
+                    sr_cut_at_word(text, SR_SPONTANEOUS_MAX, next);
                 }
                 sr_emit(out, out_max, &n, SrAnnChange, false, text);
             }

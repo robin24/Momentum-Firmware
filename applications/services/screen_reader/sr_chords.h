@@ -12,7 +12,10 @@
  * Back is held is held back in both, since only its
  * Short or its Long tells which chord it is; with the reader off a short one is lost. With the
  * reader on the chord begins at Down's Press, off only at Down's Long: a Short of Back's between
- * the two, Back let go first, is dropped with the reader on and passes with it off.
+ * the two, Back let go first, is dropped with the reader on and passes with it off. Back's Long,
+ * which waits for the release, is dropped when Back is let go while Down is held back, as the
+ * chord may still come. A chord key held on past its Back hold still names its command at its
+ * Short or Long, but a new hold of Back meanwhile is not its chord and keeps its own events.
  */
 #pragma once
 
@@ -26,6 +29,8 @@
 #endif
 #endif
 #ifndef SR_CHORDS_HAVE_INPUT
+#define INPUT_SEQUENCE_SOURCE_HARDWARE (0u)
+#define INPUT_SEQUENCE_SOURCE_SOFTWARE (1u)
 typedef enum {
     InputKeyUp,
     InputKeyDown,
@@ -67,6 +72,8 @@ typedef struct {
     int8_t chord_key; /**< key whose events are swallowed until its release, -1 for none */
     bool key_long_seen; /**< the chord key's Long ran its command (OK: Spell, Down: ToggleReader),
                              so its Short must not run the short one (Repeat, Status) */
+    bool key_orphaned; /**< the Back hold the chord key began in has ended: its command still
+                            runs, but a later hold is no chord of its */
 } SrChords;
 
 void sr_chords_init(SrChords* s);
@@ -77,6 +84,29 @@ void sr_chords_init(SrChords* s);
  *  event's time, is reserved: the machine keeps no time of its own and ignores it. */
 SrChordCommand sr_chords_feed(
     SrChords* s,
+    bool reader_on,
+    InputKey key,
+    InputType type,
+    uint32_t now_ms,
+    bool* drop,
+    bool* emit_long);
+
+/** The chord state of each source of events the filter sees: the keys, through the input
+ *  service, and the console's input send, which marks its events as made in software. Apart, a
+ *  console press whose release never comes (a scripted run cut off mid-chord) cannot turn the
+ *  keys into chords, and a console key cannot join a chord of the keys. */
+typedef struct {
+    SrChords keys;
+    SrChords console;
+} SrChordSources;
+
+void sr_chord_sources_init(SrChordSources* s);
+
+/** sr_chords_feed on the state of the event's source: sequence_source as in InputEvent,
+ *  INPUT_SEQUENCE_SOURCE_HARDWARE for the keys, anything else for the console. */
+SrChordCommand sr_chord_sources_feed(
+    SrChordSources* s,
+    uint8_t sequence_source,
     bool reader_on,
     InputKey key,
     InputType type,

@@ -310,7 +310,8 @@ static void draw_list_item(
         canvas_draw_icon(canvas, 2 + x_offset, 16 + i * FRAME_HEIGHT, ArchiveItemIcons[file_type]);
     }
 
-    if(!model->list_loading && model->item_idx == idx) {
+    // Not while a menu is open over the list: its selected entry is the focus then
+    if(!model->list_loading && model->item_idx == idx && !model->menu) {
         canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
     }
     elements_scrollable_text_line(

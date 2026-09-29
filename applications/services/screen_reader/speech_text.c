@@ -40,6 +40,8 @@ typedef struct {
     char* buf;
     size_t size;
     size_t len;
+    bool full; /**< a character did not fit */
+    bool cut_in_word; /**< the first one that did not fit went on the word the text ends in */
 } Out;
 
 static bool is_digit(char c) {
@@ -62,9 +64,19 @@ static bool is_alnum(char c) {
     return is_alpha(c) || is_digit(c);
 }
 
+/** A character of a word in the expansion: "don't" keeps its apostrophe */
+static bool is_word_char(char c) {
+    return is_alnum(c) || c == '\'';
+}
+
 /** Append one character; it is dropped when the buffer is full. */
 static void out_char(Out* o, char c) {
-    if(o->len + 1 < o->size) o->buf[o->len++] = c;
+    if(o->len + 1 < o->size) {
+        o->buf[o->len++] = c;
+    } else if(!o->full) {
+        o->full = true;
+        o->cut_in_word = is_word_char(c) && o->len && is_word_char(o->buf[o->len - 1]);
+    }
     o->buf[o->len] = '\0';
 }
 
@@ -84,8 +96,10 @@ static void out_word(Out* o, const char* s) {
     out_str(o, s);
 }
 
-/** Attach punctuation to the previous word. */
+/** Attach punctuation to the previous word. Once the buffer is full nothing more is written:
+ *  taking a space back would let punctuation from further on onto the last word. */
 static void out_punct(Out* o, char c) {
+    if(o->full) return;
     if(o->len && o->buf[o->len - 1] == ' ') o->len--;
     out_char(o, c);
 }
@@ -547,6 +561,13 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
             out_space(&o);
         }
         i++;
+    }
+    // Full inside a word: the text ends before it. A fragment ("seven se") would be spelled,
+    // logged as a missing word, and made into a clip of its own by --pull-missing
+    if(o.cut_in_word) {
+        while(o.len && is_word_char(o.buf[o.len - 1]))
+            o.len--;
+        o.buf[o.len] = '\0';
     }
     while(o.len && o.buf[o.len - 1] == ' ')
         o.buf[--o.len] = '\0';

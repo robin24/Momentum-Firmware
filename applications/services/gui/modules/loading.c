@@ -31,6 +31,8 @@ static void loading_draw_callback(Canvas* canvas, void* _model) {
     canvas_draw_icon(canvas, x, y, &A_Loading_24);
 
     canvas_draw_icon_animation(canvas, x, y, model->icon);
+    // The hourglass for the screen reader, which reads no icon
+    canvas_tap_hint_note(canvas, "Loading", false);
 }
 
 static bool loading_input_callback(InputEvent* event, void* context) {

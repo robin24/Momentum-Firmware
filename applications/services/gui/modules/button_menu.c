@@ -51,7 +51,9 @@ static void button_menu_draw_text(
     FuriString* disp_str;
     disp_str = furi_string_alloc_set(text);
     bool draw_static = true;
-    if(selected) canvas_tap_hint_focus(canvas, 0, 0);
+    if(selected) {
+        canvas_tap_hint_focus(canvas, model->position + 1, ButtonMenuItemArray_size(model->items));
+    }
 
     if(selected) {
         size_t text_width = canvas_string_width(canvas, furi_string_get_cstr(disp_str));
