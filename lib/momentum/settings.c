@@ -135,8 +135,15 @@ static const struct {
     {setting_bool(desktop_anims)},
 };
 
+// Whether the settings were read with a card mounted. /int is a folder on the card
+// (storage_process_alias), so until then the settings in RAM are the compiled defaults: after a
+// boot without a card, and when a card has just gone in, before flipper_mount_callback loads it.
+// A save in that time, a screen reader chord, would write the defaults over the settings on it
+static bool momentum_settings_loaded = false;
+
 void momentum_settings_load(void) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
+    bool card = storage_sd_status(storage) == FSE_OK;
     FlipperFormat* file = flipper_format_file_alloc(storage);
     if(flipper_format_file_open_existing(file, MOMENTUM_SETTINGS_PATH)) {
         FuriString* val_str = furi_string_alloc();
@@ -176,6 +183,8 @@ void momentum_settings_load(void) {
     }
     flipper_format_free(file);
     furi_record_close(RECORD_STORAGE);
+    // A card without the file counts too: its first save makes one
+    if(card) momentum_settings_loaded = true;
 
     rgb_backlight_load_settings(momentum_settings.rgb_backlight);
 }
@@ -187,6 +196,10 @@ void momentum_settings_save(void) {
     // false for the whole update boot, including after the updater resets the boot mode.
     if(!furi_hal_is_normal_boot()) {
         FURI_LOG_I(TAG, "settings not saved: not a normal boot");
+        return;
+    }
+    if(!momentum_settings_loaded) {
+        FURI_LOG_I(TAG, "settings not saved: not loaded from the card yet");
         return;
     }
 
