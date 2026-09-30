@@ -190,9 +190,6 @@ void flipper_init(void) {
         if(storage_sd_status(storage) != FSE_OK) {
             FURI_LOG_D(TAG, "SD Card not ready, skipping early init");
             // Init on SD insert done by storage using flipper_mount_callback()
-            // The settings file is on internal storage: loaded now, so that a save before the
-            // card mounts (a screen reader chord) writes the saved settings, not the defaults
-            momentum_settings_load();
         } else {
             // Workaround to avoid double load on boot but also have animated boot screen
             skip_double_mount = true;
