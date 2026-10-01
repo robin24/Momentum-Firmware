@@ -153,6 +153,18 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         if(strcmp(text, ". .") == 0) sr_copy(text, sizeof(text), "Parent folder");
         if(text[0] == '\0' || sr_is_arrow_token(text) || sr_is_dashes(text)) continue;
 
+        // A piece of a word drawn apart from the rest, a line broken inside a word or a word
+        // drawn letter-spaced, goes onto the row before it with no space; the dash the line
+        // wrapper drew at its break goes, a dash of the text's own stays
+        if(r->join != SrJoinNone && row && !row_plain_note) {
+            size_t len = strlen(row->text);
+            if(r->join == SrJoinDropDash && len > 0 && row->text[len - 1] == '-') {
+                row->text[len - 1] = '\0';
+            }
+            sr_append(row->text, sizeof(row->text), text);
+            continue;
+        }
+
         bool status = sr_record_is_status(r);
         bool button = sr_record_is_button(r);
         bool focus = r->focus || (!any_focus_hint && r->inverted && !button && !status);
@@ -179,7 +191,8 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             row->x = r->x;
             row->y = r->y;
             row->font = r->font;
-            row->note = r->note; // a row a note begins is never the title
+            row->note = r->note; // a row a note begins is never the title, unless marked so
+            row->title = r->title;
             row->kind = kind;
             row->button = r->button;
             row_plain_note = plain_note;
@@ -193,6 +206,13 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         }
     }
 
+    // A row a module marked as the title is it, whatever its font, drawn or a note: the file
+    // browser's tab name, drawn small, and the folder name it does not draw
+    for(uint8_t i = 0; i < screen->row_count && screen->title_row < 0; i++) {
+        if(screen->rows[i].title && screen->rows[i].kind == SrRowNormal) {
+            screen->title_row = (int8_t)i;
+        }
+    }
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* c = &screen->rows[i];
         if(c->kind == SrRowFocus && c->font == SrFontKeyboard) screen->on_keyboard = true;
@@ -288,6 +308,8 @@ static const char* sr_button_side(const SrRow* row) {
     if(row->button == 1) return "left";
     if(row->button == 2) return "center";
     if(row->button == 3) return "right";
+    if(row->button == 4) return "up";
+    if(row->button == 5) return "down";
     // No hint: guess from where the label sits, for third party apps.
     if(row->x < 40) return "left";
     if(row->x > 88) return "right";

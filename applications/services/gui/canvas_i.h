@@ -18,6 +18,10 @@
 #define CANVAS_TAP_LAYER_UNKNOWN 255
 #define CANVAS_TAP_FONT_CUSTOM   255
 
+/** How a drawn string continues the one before it, for canvas_tap_hint_join */
+#define CANVAS_TAP_JOIN_DIRECT    1 /**< no space between them: a word drawn in pieces */
+#define CANVAS_TAP_JOIN_DROP_DASH 2 /**< no space, and the dash drawn at the line break goes */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -49,7 +53,9 @@ typedef struct {
     bool focus; /**< a focus hint applied to this string */
     bool note; /**< not drawn: a note's words, at x 0, y 0 from canvas_tap_hint_note, at their
                     place from canvas_tap_hint_note_at */
-    uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
+    uint8_t button; /**< button hint: 0 none, 1 left, 2 center, 3 right, 4 up, 5 down */
+    uint8_t join; /**< CANVAS_TAP_JOIN_*: continues the string drawn before it, 0 if not */
+    bool title; /**< the screen's title, from canvas_tap_hint_title or a title note */
     uint16_t index; /**< 1-based position from the focus hint, 0 if unknown */
     uint16_t count; /**< item count from the focus hint, 0 if unknown */
     char text[CANVAS_TAP_TEXT_MAX];
@@ -77,6 +83,8 @@ struct Canvas {
     uint8_t tap_font;
     bool tap_hint_focus;
     uint8_t tap_hint_button;
+    uint8_t tap_hint_join;
+    bool tap_hint_title;
     uint16_t tap_hint_index;
     uint16_t tap_hint_count;
     bool tap_hint_full;
@@ -181,8 +189,21 @@ void canvas_tap_flush(Canvas* canvas);
 /** The next drawn string is the focused item. index is 1-based, 0 if unknown. */
 void canvas_tap_hint_focus(Canvas* canvas, uint16_t index, uint16_t count);
 
-/** The next drawn string is a dialog button label: 1 left, 2 center, 3 right. */
+/** The next drawn string is a button label: 1 left, 2 center, 3 right, 4 up, 5 down. */
 void canvas_tap_hint_button(Canvas* canvas, uint8_t side);
+
+/** The next drawn string is the screen's title, whatever its font: read first, and a change of
+ * it is a new screen. */
+void canvas_tap_hint_title(Canvas* canvas);
+
+/** The screen's title, not drawn: a note the screen reader reads as the title, such as the name
+ * of the folder a list shows. */
+void canvas_tap_hint_title_note(Canvas* canvas, const char* text);
+
+/** The next drawn string continues the one drawn before it, with no space: a line broken inside
+ * a word, or a word drawn in pieces. join is CANVAS_TAP_JOIN_DIRECT, or
+ * CANVAS_TAP_JOIN_DROP_DASH when the string before ends with a dash drawn only at the break. */
+void canvas_tap_hint_join(Canvas* canvas, uint8_t join);
 
 /** The next drawn string is a shortened or scrolled fragment of full_text.
  * With verify_prefix, the hint is used only if the drawn string (minus a trailing "...")

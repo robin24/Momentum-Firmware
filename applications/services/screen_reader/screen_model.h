@@ -42,6 +42,13 @@ enum {
     SrFontCustom = 255,
 };
 
+/** How a drawn string continues the one before it, from canvas_tap_hint_join. */
+enum {
+    SrJoinNone = 0,
+    SrJoinDirect = 1, /**< no space between them: a word drawn in pieces, letter-spaced */
+    SrJoinDropDash = 2, /**< no space, and the dash the line wrapper drew at the break goes */
+};
+
 /** One drawn string as captured by the GUI text tap. */
 typedef struct {
     int16_t x;
@@ -52,7 +59,10 @@ typedef struct {
     bool focus; /**< a module marked this string as the focused item */
     bool note; /**< not drawn: a view's words for what it shows as icons. At x 0, y 0 a plain
                     note, read first as a row of its own; elsewhere placed as drawn text is */
-    uint8_t button; /**< dialog button hint: 0 none, 1 left, 2 center, 3 right */
+    uint8_t button; /**< button hint: 0 none, 1 left, 2 center, 3 right, 4 up, 5 down */
+    uint8_t join; /**< SrJoin: this string continues the one drawn before it, a word that the
+                       wrapper broke or that was drawn in pieces */
+    bool title; /**< the screen's title whatever its font, drawn or a note */
     uint16_t index; /**< 1-based position from the module, 0 if unknown */
     uint16_t count; /**< item count from the module, 0 if unknown */
     char text[SR_TEXT_MAX];
@@ -80,7 +90,8 @@ typedef struct {
     int16_t x;
     int16_t y;
     uint8_t font;
-    bool note; /**< a note begins the row, which is never the title */
+    bool note; /**< a note begins the row, which is never the title unless marked so */
+    bool title; /**< a record marked as the screen's title begins the row */
     SrRowKind kind;
     uint8_t button; /**< button side hint of the first record, 0 if none */
     uint16_t index;
