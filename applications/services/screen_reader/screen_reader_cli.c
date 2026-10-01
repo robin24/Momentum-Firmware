@@ -64,6 +64,10 @@ static const char* sr_button_name(uint8_t side) {
         return "center";
     case 3:
         return "right";
+    case 4:
+        return "up";
+    case 5:
+        return "down";
     default:
         return "?";
     }
