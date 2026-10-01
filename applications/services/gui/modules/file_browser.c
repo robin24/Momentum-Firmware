@@ -636,7 +636,15 @@ static void browser_draw_list(Canvas* canvas, FileBrowserModel* model) {
                 canvas, 2, Y_OFFSET + 1 + i * FRAME_HEIGHT, BrowserItemIcons[item_type]);
         }
         if(!model->list_loading && model->item_idx == idx) {
-            canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
+            // Below the starting folder the first entry is the parent folder's: it has no
+            // position, and the files and folders count from 1
+            if(model->is_root) {
+                canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
+            } else if(item_type == BrowserItemTypeBack) {
+                canvas_tap_hint_focus(canvas, 0, 0);
+            } else {
+                canvas_tap_hint_focus(canvas, (uint16_t)idx, (uint16_t)(model->item_cnt - 1));
+            }
         }
         elements_scrollable_text_line(
             canvas,
