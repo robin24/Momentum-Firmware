@@ -26,7 +26,19 @@ typedef enum {
     CrashTestSubmenuHalt,
     CrashTestSubmenuHeapUnderflow,
     CrashTestSubmenuHeapOverflow,
+    CrashTestSubmenuBusFault,
 } CrashTestSubmenu;
+
+static void crash_test_bus_fault(void) {
+    // A read through a bad pointer inside a firmware function: strlen on an address that no
+    // memory answers, the external memory bank, empty on the Flipper. The crash address should
+    // name the instruction in strlen that faulted, not the fault handler. Both are volatile, or
+    // the compiler drops the call whose result goes unused
+    volatile uintptr_t nowhere = 0x60000000;
+    volatile size_t length = strlen((const char*)nowhere);
+    UNUSED(length);
+    furi_crash("Test failed, should've crashed with \"BusFault\"");
+}
 
 static void crash_test_corrupt_heap_underflow(void) {
     const size_t block_size = 1000;
@@ -96,6 +108,9 @@ static void crash_test_submenu_callback(void* context, uint32_t index) {
     case CrashTestSubmenuHeapOverflow:
         crash_test_corrupt_heap_overflow();
         break;
+    case CrashTestSubmenuBusFault:
+        crash_test_bus_fault();
+        break;
     default:
         furi_crash();
     }
@@ -151,6 +166,12 @@ CrashTest* crash_test_alloc(void) {
         instance->submenu,
         "Heap overflow",
         CrashTestSubmenuHeapOverflow,
+        crash_test_submenu_callback,
+        instance);
+    submenu_add_item(
+        instance->submenu,
+        "Bus fault in firmware",
+        CrashTestSubmenuBusFault,
         crash_test_submenu_callback,
         instance);
 
