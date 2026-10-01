@@ -192,8 +192,11 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                     canvas_set_font(canvas, FontBatteryPercent);
                     canvas_draw_str_aligned(
                         canvas, pos_x - 9, pos_y + height / 2 + 1, AlignCenter, AlignBottom, "S");
+                    // START is drawn letter-spaced in three pieces: one word for the reader
+                    canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DIRECT);
                     canvas_draw_str_aligned(
                         canvas, pos_x, pos_y + height / 2 + 1, AlignCenter, AlignBottom, "TAR");
+                    canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DIRECT);
                     canvas_draw_str_aligned(
                         canvas, pos_x + 9, pos_y + height / 2 + 1, AlignCenter, AlignBottom, "T");
 

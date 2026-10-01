@@ -389,9 +389,12 @@ void elements_multiline_text_aligned(
     }
 
     /* go through text line by line and print them */
+    bool joins = false; // the line before broke inside a word: the screen reader reads it whole
     for(const char* start = text; start[0];) {
         size_t chars_fit = elements_get_max_chars_to_fit(canvas, horizontal, start, x);
 
+        if(joins) canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DROP_DASH);
+        joins = false;
         if((start[chars_fit] == '\n') || (start[chars_fit] == 0)) {
             line = furi_string_alloc_printf("%.*s", chars_fit, start);
         } else if((y + font_height) > canvas_height(canvas)) {
@@ -399,6 +402,7 @@ void elements_multiline_text_aligned(
         } else {
             chars_fit -= 1; // account for the dash
             line = furi_string_alloc_printf("%.*s-\n", chars_fit, start);
+            joins = chars_fit > 0 && start[chars_fit - 1] != ' ' && start[chars_fit] != ' ';
         }
         canvas_draw_str_aligned(canvas, x, y, horizontal, vertical, furi_string_get_cstr(line));
         furi_string_free(line);
@@ -929,6 +933,15 @@ void elements_text_box(
     mono = false;
     inverse = false;
     for(size_t i = 0; i < line_num; i++) {
+        // A line the box broke inside a word continues the line before it: the screen reader
+        // reads the word whole. A line after a newline or a space starts afresh
+        if(i > 0 && line[i].len > 0) {
+            char before = line[i].text[-1];
+            char after = line[i].text[0];
+            if(before != '\n' && before != ' ' && after != ' ' && after != '\n' && after != '\e') {
+                canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DIRECT);
+            }
+        }
         for(size_t j = 0; j < line[i].len; j++) {
             // Process format symbols
             if(line[i].text[j] == '\e' && j < line[i].len - 1) { //-V781
