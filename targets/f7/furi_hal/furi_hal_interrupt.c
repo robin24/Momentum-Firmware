@@ -291,11 +291,44 @@ void NMI_Handler(void) {
     }
 }
 
-void HardFault_Handler(void) {
+/** Make the crash keep the faulting instruction's address rather than the handler's (check.c) */
+void __furi_crash_set_fault_pc(uint32_t pc);
+
+/** The address of the instruction that faulted: the pc the core pushed on entry to the fault
+ * handler, word 6 of the frame. 0 when the frame can't be trusted: pushing or popping it failed,
+ * as when a stack overflows into its guard, or it lies outside RAM1, where every stack lives */
+static uint32_t furi_hal_interrupt_fault_pc(const uint32_t* frame) {
+    const uint32_t frame_errors = SCB_CFSR_MSTKERR_Msk | SCB_CFSR_MUNSTKERR_Msk |
+                                  SCB_CFSR_STKERR_Msk | SCB_CFSR_UNSTKERR_Msk;
+    const uint32_t start = (uint32_t)frame;
+    if((SCB->CFSR & frame_errors) || start < SRAM1_BASE ||
+       start > SRAM1_BASE + SRAM1_SIZE - 8 * sizeof(uint32_t)) {
+        return 0;
+    }
+    return frame[6];
+}
+
+/** A fault handler's entry, before any push: the handler named gets the frame the core pushed,
+ * on the stack in use when the fault hit (bit 2 of the exception return value in lr: 0 the main
+ * stack, 1 a thread's) */
+#define FURI_HAL_INTERRUPT_FAULT_ENTRY(handler)   \
+    asm volatile("tst   lr, #4                \n" \
+                 "ite   eq                    \n" \
+                 "mrseq r0, msp               \n" \
+                 "mrsne r0, psp               \n" \
+                 "b     " #handler "          \n")
+
+static void __attribute__((used)) furi_hal_interrupt_hard_fault(const uint32_t* frame) {
+    __furi_crash_set_fault_pc(furi_hal_interrupt_fault_pc(frame));
     furi_crash("HardFault");
 }
 
-void MemManage_Handler(void) {
+void __attribute__((naked)) HardFault_Handler(void) {
+    FURI_HAL_INTERRUPT_FAULT_ENTRY(furi_hal_interrupt_hard_fault);
+}
+
+static void __attribute__((used)) furi_hal_interrupt_mem_manage(const uint32_t* frame) {
+    __furi_crash_set_fault_pc(furi_hal_interrupt_fault_pc(frame));
     if(FURI_BIT(SCB->CFSR, SCB_CFSR_MMARVALID_Pos)) {
         uint32_t memfault_address = SCB->MMFAR;
         if(memfault_address < (1024 * 1024)) {
@@ -313,7 +346,12 @@ void MemManage_Handler(void) {
     furi_crash("MemManage");
 }
 
-void BusFault_Handler(void) {
+void __attribute__((naked)) MemManage_Handler(void) {
+    FURI_HAL_INTERRUPT_FAULT_ENTRY(furi_hal_interrupt_mem_manage);
+}
+
+static void __attribute__((used)) furi_hal_interrupt_bus_fault(const uint32_t* frame) {
+    __furi_crash_set_fault_pc(furi_hal_interrupt_fault_pc(frame));
     furi_log_puts("\r\n" _FURI_LOG_CLR_E "Bus fault:\r\n");
     if(FURI_BIT(SCB->CFSR, SCB_CFSR_LSPERR_Pos)) {
         furi_log_puts(" - lazy stacking for exception entry\r\n");
@@ -358,8 +396,17 @@ void BusFault_Handler(void) {
     furi_crash("BusFault");
 }
 
-void UsageFault_Handler(void) {
+void __attribute__((naked)) BusFault_Handler(void) {
+    FURI_HAL_INTERRUPT_FAULT_ENTRY(furi_hal_interrupt_bus_fault);
+}
+
+static void __attribute__((used)) furi_hal_interrupt_usage_fault(const uint32_t* frame) {
+    __furi_crash_set_fault_pc(furi_hal_interrupt_fault_pc(frame));
     furi_crash("UsageFault");
+}
+
+void __attribute__((naked)) UsageFault_Handler(void) {
+    FURI_HAL_INTERRUPT_FAULT_ENTRY(furi_hal_interrupt_usage_fault);
 }
 
 void DebugMon_Handler(void) {
