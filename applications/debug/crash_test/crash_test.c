@@ -11,10 +11,12 @@ typedef struct {
     Gui* gui;
     ViewDispatcher* view_dispatcher;
     Submenu* submenu;
+    View* draw_fault;
 } CrashTest;
 
 typedef enum {
     CrashTestViewSubmenu,
+    CrashTestViewDrawFault,
 } CrashTestView;
 
 typedef enum {
@@ -27,6 +29,8 @@ typedef enum {
     CrashTestSubmenuHeapUnderflow,
     CrashTestSubmenuHeapOverflow,
     CrashTestSubmenuBusFault,
+    CrashTestSubmenuBusFaultDrawing,
+    CrashTestSubmenuNullCall,
 } CrashTestSubmenu;
 
 static void crash_test_bus_fault(void) {
@@ -38,6 +42,22 @@ static void crash_test_bus_fault(void) {
     volatile size_t length = strlen((const char*)nowhere);
     UNUSED(length);
     furi_crash("Test failed, should've crashed with \"BusFault\"");
+}
+
+static void crash_test_draw_fault_callback(Canvas* canvas, void* model) {
+    // The same bus fault, while drawing: drawing runs on the GUI service's thread, whose stack
+    // lies in the second memory bank, SRAM2, unlike an app thread's
+    UNUSED(canvas);
+    UNUSED(model);
+    crash_test_bus_fault();
+}
+
+static void crash_test_null_call(void) {
+    // A call through a null function pointer inside a firmware function: furi_hal_info_get calls
+    // its output callback without checking it. The crash address should name that call, not the
+    // fault handler
+    furi_hal_info_get(NULL, '.', NULL);
+    furi_crash("Test failed, should've crashed with \"MemManage\"");
 }
 
 static void crash_test_corrupt_heap_underflow(void) {
@@ -81,7 +101,6 @@ static void crash_test_corrupt_heap_overflow(void) {
 
 static void crash_test_submenu_callback(void* context, uint32_t index) {
     CrashTest* instance = (CrashTest*)context;
-    UNUSED(instance);
 
     switch(index) {
     case CrashTestSubmenuCheck:
@@ -111,6 +130,12 @@ static void crash_test_submenu_callback(void* context, uint32_t index) {
     case CrashTestSubmenuBusFault:
         crash_test_bus_fault();
         break;
+    case CrashTestSubmenuBusFaultDrawing:
+        view_dispatcher_switch_to_view(instance->view_dispatcher, CrashTestViewDrawFault);
+        break;
+    case CrashTestSubmenuNullCall:
+        crash_test_null_call();
+        break;
     default:
         furi_crash();
     }
@@ -136,6 +161,11 @@ CrashTest* crash_test_alloc(void) {
     view = submenu_get_view(instance->submenu);
     view_set_previous_callback(view, crash_test_exit_callback);
     view_dispatcher_add_view(instance->view_dispatcher, CrashTestViewSubmenu, view);
+    // A view whose drawing crashes
+    instance->draw_fault = view_alloc();
+    view_set_draw_callback(instance->draw_fault, crash_test_draw_fault_callback);
+    view_dispatcher_add_view(
+        instance->view_dispatcher, CrashTestViewDrawFault, instance->draw_fault);
     submenu_add_item(
         instance->submenu, "Check", CrashTestSubmenuCheck, crash_test_submenu_callback, instance);
     submenu_add_item(
@@ -174,11 +204,25 @@ CrashTest* crash_test_alloc(void) {
         CrashTestSubmenuBusFault,
         crash_test_submenu_callback,
         instance);
+    submenu_add_item(
+        instance->submenu,
+        "Bus fault while drawing",
+        CrashTestSubmenuBusFaultDrawing,
+        crash_test_submenu_callback,
+        instance);
+    submenu_add_item(
+        instance->submenu,
+        "Null call in firmware",
+        CrashTestSubmenuNullCall,
+        crash_test_submenu_callback,
+        instance);
 
     return instance;
 }
 
 void crash_test_free(CrashTest* instance) {
+    view_dispatcher_remove_view(instance->view_dispatcher, CrashTestViewDrawFault);
+    view_free(instance->draw_fault);
     view_dispatcher_remove_view(instance->view_dispatcher, CrashTestViewSubmenu);
     submenu_free(instance->submenu);
 
