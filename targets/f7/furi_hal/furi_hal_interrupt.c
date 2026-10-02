@@ -296,13 +296,14 @@ void __furi_crash_set_fault_pc(uint32_t pc);
 
 /** The address of the instruction that faulted: the pc the core pushed on entry to the fault
  * handler, word 6 of the frame. 0 when the frame can't be trusted: pushing or popping it failed,
- * as when a stack overflows into its guard, or it lies outside RAM1, where every stack lives */
+ * as when a stack overflows into its guard, or it lies outside RAM, SRAM1 holding the main stack
+ * and the apps' threads, SRAM2 the services' */
 static uint32_t furi_hal_interrupt_fault_pc(const uint32_t* frame) {
     const uint32_t frame_errors = SCB_CFSR_MSTKERR_Msk | SCB_CFSR_MUNSTKERR_Msk |
                                   SCB_CFSR_STKERR_Msk | SCB_CFSR_UNSTKERR_Msk;
     const uint32_t start = (uint32_t)frame;
     if((SCB->CFSR & frame_errors) || start < SRAM1_BASE ||
-       start > SRAM1_BASE + SRAM1_SIZE - 8 * sizeof(uint32_t)) {
+       start > SRAM2B_BASE + SRAM2B_SIZE - 8 * sizeof(uint32_t)) {
         return 0;
     }
     return frame[6];
