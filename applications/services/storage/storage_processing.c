@@ -3,6 +3,9 @@
 
 #include "storage_processing.h"
 #include "storage_internal_dirname_i.h"
+#ifndef FURI_RAM_EXEC
+#include <furi/flipper.h>
+#endif
 
 #define TAG "Storage"
 
@@ -487,6 +490,16 @@ static FS_Error storage_process_sd_format(Storage* app) {
     } else {
         ret = sd_format_card(&app->storage[ST_EXT]);
         storage_data_timestamp(&app->storage[ST_EXT]);
+#ifndef FURI_RAM_EXEC
+        if(ret == FSE_OK) {
+            // A new, empty card, as if one had been taken out and put in: the next tick announces
+            // it mounted, and flipper_mount_callback reads the settings from it, which allows
+            // saving again when the card before could not be read
+            StorageEvent event = {.type = StorageEventTypeCardUnmount};
+            flipper_mount_callback(&event, NULL);
+            app->sd_gui.enabled = false;
+        }
+#endif
     }
 
     return ret;
