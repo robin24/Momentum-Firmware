@@ -90,6 +90,10 @@ void storage_tick(Storage* app) {
 
         FURI_LOG_I(TAG, "SD card unmount");
         StorageEvent event = {.type = StorageEventTypeCardUnmount};
+#ifndef FURI_RAM_EXEC
+        // First, as for a mount; it touches no file, so the storage thread may run it
+        flipper_mount_callback(&event, NULL);
+#endif
         furi_pubsub_publish(app->pubsub, &event);
     }
 

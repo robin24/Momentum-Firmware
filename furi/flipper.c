@@ -132,7 +132,13 @@ void flipper_mount_callback(const void* message, void* context) {
     UNUSED(context);
     const StorageEvent* event = message;
 
-    if(event->type == StorageEventTypeCardMount) {
+    if(event->type == StorageEventTypeCardUnmount) {
+        // The next mount is a card going in, this one or another, whose settings must be read.
+        // The skip below is for a mount event the boot itself may still bring; since 7db15e838
+        // a card already mounted at boot brings none, and the skip would swallow the next real one
+        skip_double_mount = false;
+        momentum_settings_card_removed();
+    } else if(event->type == StorageEventTypeCardMount) {
         // Workaround to avoid double load on boot but also have animated boot screen
         if(skip_double_mount) {
             skip_double_mount = false;
