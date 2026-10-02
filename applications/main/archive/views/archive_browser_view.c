@@ -382,6 +382,8 @@ static void archive_render_status_bar(Canvas* canvas, ArchiveBrowserViewModel* m
     canvas_draw_rframe(canvas, 0, 0, 51, 13, 1); // frame
     canvas_draw_line(canvas, 49, 1, 49, 11); // shadow right
     canvas_draw_line(canvas, 1, 11, 49, 11); // shadow bottom
+    // The tab's name, or the path, is the screen's title: a new tab is a new screen
+    canvas_tap_hint_title(canvas);
     if(tab_name) {
         canvas_draw_str_aligned(canvas, 25, 9, AlignCenter, AlignBottom, tab_name);
     } else {

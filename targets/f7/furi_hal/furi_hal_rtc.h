@@ -51,7 +51,9 @@ typedef enum {
     /* Index of FS directory entry corresponding to FW update to be applied */
     FuriHalRtcRegisterUpdateFolderFSIndex,
     FuriHalRtcRegisterPinValue, /**< Encoded value of the currently set PIN */
-    FuriHalRtcRegisterFaultLr, /**< Return address of the last failed check, 0 when none */
+    /** Address of the last crash, 0 when none: the instruction that faulted (even), or the
+     * return address of a failed check or of a call through a null pointer (odd), see check.c */
+    FuriHalRtcRegisterFaultLr,
     /** First eight hex digits of the git hash of the build that stored FaultLr, 0 when unknown */
     FuriHalRtcRegisterFaultBuild,
 

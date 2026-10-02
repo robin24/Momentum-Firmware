@@ -1,4 +1,5 @@
 #include "elements.h"
+#include "elements_join_i.h"
 #include <m-core.h>
 #include <assets_icons.h>
 #include <furi_hal_resources.h>
@@ -243,6 +244,7 @@ void elements_button_up(Canvas* canvas, const char* str) {
 
     canvas_invert_color(canvas);
     canvas_draw_icon(canvas, x + horizontal_offset, y - icon_v_offset, icon);
+    canvas_tap_hint_button(canvas, 4);
     canvas_draw_str(
         canvas, x + horizontal_offset + icon_width_with_offset, y - vertical_offset, str);
     canvas_invert_color(canvas);
@@ -274,6 +276,7 @@ void elements_button_down(Canvas* canvas, const char* str) {
     canvas_draw_line(canvas, line_x - 3, line_y, line_x - 3, y - 3);
 
     canvas_invert_color(canvas);
+    canvas_tap_hint_button(canvas, 5);
     canvas_draw_str(canvas, x - button_width + horizontal_offset, y - vertical_offset, str);
     canvas_draw_icon(
         canvas, x - horizontal_offset - icon_get_width(icon), y - icon_v_offset, icon);
@@ -389,14 +392,19 @@ void elements_multiline_text_aligned(
     }
 
     /* go through text line by line and print them */
+    bool joins = false; // the line before broke inside a word: the screen reader reads it whole
     for(const char* start = text; start[0];) {
         size_t chars_fit = elements_get_max_chars_to_fit(canvas, horizontal, start, x);
 
+        if(joins) canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DROP_DASH);
+        joins = false;
         if((start[chars_fit] == '\n') || (start[chars_fit] == 0)) {
             line = furi_string_alloc_printf("%.*s", chars_fit, start);
         } else if((y + font_height) > canvas_height(canvas)) {
             line = furi_string_alloc_printf("%.*s...\n", chars_fit, start);
         } else {
+            // The dash takes the last place, and the next line starts at the letter it replaced
+            joins = chars_fit > 0 && elements_break_inside_word(start, start + chars_fit - 1);
             chars_fit -= 1; // account for the dash
             line = furi_string_alloc_printf("%.*s-\n", chars_fit, start);
         }
@@ -929,6 +937,11 @@ void elements_text_box(
     mono = false;
     inverse = false;
     for(size_t i = 0; i < line_num; i++) {
+        // A line the box broke inside a word continues the line before it: the screen reader
+        // reads the word whole. A line after a newline or a space starts afresh
+        if(i > 0 && line[i].len > 0 && elements_break_inside_word(text, line[i].text)) {
+            canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DIRECT);
+        }
         for(size_t j = 0; j < line[i].len; j++) {
             // Process format symbols
             if(line[i].text[j] == '\e' && j < line[i].len - 1) { //-V781

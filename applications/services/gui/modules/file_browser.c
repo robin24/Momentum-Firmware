@@ -139,6 +139,8 @@ typedef struct {
     bool is_root;
     bool folder_loading;
     bool list_loading;
+    char folder[CANVAS_TAP_TEXT_MAX]; /**< the open folder's name, for the screen reader, which
+                                           reads it as the title; empty at a storage's root */
     uint32_t item_cnt;
     int32_t item_idx;
     int32_t array_offset;
@@ -205,7 +207,13 @@ FileBrowser* file_browser_alloc(FuriString* result_path) {
     browser->result_path = result_path;
 
     with_view_model(
-        browser->view, FileBrowserModel * model, { items_array_init(model->items); }, false);
+        browser->view,
+        FileBrowserModel * model,
+        {
+            items_array_init(model->items);
+            model->folder[0] = '\0';
+        },
+        false);
 
     return browser;
 }
@@ -281,6 +289,8 @@ void file_browser_stop(FileBrowser* browser) {
             model->item_idx = 0;
             model->array_offset = 0;
             model->list_offset = 0;
+            // A browser started again names no folder of before
+            model->folder[0] = '\0';
         },
         false);
 }
@@ -377,12 +387,19 @@ static void
     FileBrowser* browser = (FileBrowser*)context;
 
     int32_t load_offset = 0;
+    // The folder's name for the screen reader, none at a storage's root, such as /ext, which has
+    // no parent folder entry either
+    FuriString* folder = furi_string_alloc();
+    if(!is_root) {
+        path_extract_basename(file_browser_worker_get_path_current(browser->worker), folder);
+    }
 
     with_view_model(
         browser->view,
         FileBrowserModel * model,
         {
             items_array_reset(model->items);
+            strlcpy(model->folder, furi_string_get_cstr(folder), sizeof(model->folder));
             if(is_root) {
                 model->item_cnt = item_cnt;
                 model->item_idx = (file_idx > 0) ? file_idx : 0;
@@ -401,6 +418,7 @@ static void
             model->folder_loading = false;
         },
         false);
+    furi_string_free(folder);
     browser_update_offset(browser);
 
     file_browser_worker_load(browser->worker, load_offset, ITEM_LIST_LEN_MAX);
@@ -566,6 +584,8 @@ static void browser_draw_list(Canvas* canvas, FileBrowserModel* model) {
     FuriString* filename;
     filename = furi_string_alloc();
 
+    if(model->folder[0] != '\0') canvas_tap_hint_title_note(canvas, model->folder);
+
     for(uint32_t i = 0; i < MIN(model->item_cnt, LIST_ITEMS); i++) {
         int32_t idx = CLAMP((uint32_t)(i + model->list_offset), model->item_cnt, 0u);
 
@@ -618,7 +638,15 @@ static void browser_draw_list(Canvas* canvas, FileBrowserModel* model) {
                 canvas, 2, Y_OFFSET + 1 + i * FRAME_HEIGHT, BrowserItemIcons[item_type]);
         }
         if(!model->list_loading && model->item_idx == idx) {
-            canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
+            // Below a storage's root the first entry is the parent folder's: it has no position,
+            // and the files and folders count from 1
+            if(model->is_root) {
+                canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
+            } else if(item_type == BrowserItemTypeBack) {
+                canvas_tap_hint_focus(canvas, 0, 0);
+            } else {
+                canvas_tap_hint_focus(canvas, (uint16_t)idx, (uint16_t)(model->item_cnt - 1));
+            }
         }
         elements_scrollable_text_line(
             canvas,

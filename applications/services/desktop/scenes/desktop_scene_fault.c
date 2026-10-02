@@ -8,7 +8,7 @@
 #define DESKTOP_FAULT_ADDRESS_LINE_LEN (sizeof("\nat 0803ABCD") - 1)
 
 /** The popup keeps a pointer to its text, so the text lives here rather than on the stack: the
- * message, then "at" and the return address of the failed check (check.c) when one is kept */
+ * message, then "at" and the crash address check.c kept, when there is one */
 static char desktop_fault_text[64];
 
 void desktop_scene_fault_callback(void* context) {

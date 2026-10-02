@@ -142,6 +142,8 @@ static void sr_text(const CanvasTapRecord* record, void* context) {
     r->focus = record->focus;
     r->note = record->note;
     r->button = record->button;
+    r->join = record->join;
+    r->title = record->title;
     r->index = record->index;
     r->count = record->count;
     strlcpy(r->text, record->text, sizeof(r->text));

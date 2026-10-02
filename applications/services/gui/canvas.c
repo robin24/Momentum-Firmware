@@ -31,6 +31,8 @@ Canvas* canvas_init(void) {
     canvas->tap_font = FontSecondary;
     canvas->tap_hint_focus = false;
     canvas->tap_hint_button = 0;
+    canvas->tap_hint_join = 0;
+    canvas->tap_hint_title = false;
     canvas->tap_hint_full = false;
     canvas->tap_run_active = false;
 
@@ -92,6 +94,10 @@ static void canvas_tap_fill(Canvas* canvas, CanvasTapRecord* record, int32_t x, 
     }
     record->button = canvas->tap_hint_button;
     canvas->tap_hint_button = 0;
+    record->join = canvas->tap_hint_join;
+    canvas->tap_hint_join = 0;
+    record->title = canvas->tap_hint_title;
+    canvas->tap_hint_title = false;
 }
 
 /** Only a string that was actually shortened may claim a full text hint: it has to end with
@@ -114,6 +120,8 @@ static void canvas_tap_text(Canvas* canvas, int32_t x, int32_t y, const char* st
     if(!canvas->tap_callback) {
         canvas->tap_hint_focus = false;
         canvas->tap_hint_button = 0;
+        canvas->tap_hint_join = 0;
+        canvas->tap_hint_title = false;
         canvas->tap_hint_full = false;
         return;
     }
@@ -135,6 +143,8 @@ static void canvas_tap_glyph(Canvas* canvas, int32_t x, int32_t y, uint16_t ch) 
     if(!canvas->tap_callback) {
         canvas->tap_hint_focus = false;
         canvas->tap_hint_button = 0;
+        canvas->tap_hint_join = 0;
+        canvas->tap_hint_title = false;
         canvas->tap_hint_full = false;
         return;
     }
@@ -146,9 +156,10 @@ static void canvas_tap_glyph(Canvas* canvas, int32_t x, int32_t y, uint16_t ch) 
     bool inverted = canvas_tap_logical_inverted(canvas);
     bool continues =
         canvas->tap_run_active && !canvas->tap_hint_focus && !canvas->tap_hint_button &&
-        canvas->tap_run.y == y && canvas->tap_run.layer == canvas->tap_layer &&
-        canvas->tap_run.font == canvas->tap_font && canvas->tap_run.inverted == inverted &&
-        x >= canvas->tap_run_next_x && strlen(canvas->tap_run.text) < CANVAS_TAP_TEXT_MAX - 1;
+        !canvas->tap_hint_join && !canvas->tap_hint_title && canvas->tap_run.y == y &&
+        canvas->tap_run.layer == canvas->tap_layer && canvas->tap_run.font == canvas->tap_font &&
+        canvas->tap_run.inverted == inverted && x >= canvas->tap_run_next_x &&
+        strlen(canvas->tap_run.text) < CANVAS_TAP_TEXT_MAX - 1;
     if(!continues) {
         canvas_tap_flush(canvas);
         canvas_tap_fill(canvas, &canvas->tap_run, x, y);
@@ -165,6 +176,8 @@ void canvas_tap_set_callback(Canvas* canvas, CanvasTapCallback callback, void* c
     canvas->tap_run_active = false;
     canvas->tap_hint_focus = false;
     canvas->tap_hint_button = 0;
+    canvas->tap_hint_join = 0;
+    canvas->tap_hint_title = false;
     canvas->tap_hint_full = false;
     canvas->tap_callback = callback;
     canvas->tap_context = context;
@@ -175,6 +188,8 @@ void canvas_tap_set_layer(Canvas* canvas, uint8_t layer) {
     canvas_tap_flush(canvas);
     canvas->tap_hint_focus = false;
     canvas->tap_hint_button = 0;
+    canvas->tap_hint_join = 0;
+    canvas->tap_hint_title = false;
     canvas->tap_hint_full = false;
     canvas->tap_layer = layer;
 }
@@ -210,8 +225,13 @@ void canvas_tap_note(Canvas* canvas, int32_t x, int32_t y, const char* text) {
 // A note's record of its own on the layer being drawn, at x, y (0, 0 for a plain note), in the
 // secondary font and the normal colour. It is not drawn text: the pending glyph run and the
 // hints waiting for the next drawn string stay as they are
-static void
-    canvas_tap_note_record(Canvas* canvas, int32_t x, int32_t y, const char* text, bool focus) {
+static void canvas_tap_note_record(
+    Canvas* canvas,
+    int32_t x,
+    int32_t y,
+    const char* text,
+    bool focus,
+    bool title) {
     CanvasTapRecord record;
     memset(&record, 0, sizeof(record));
     record.x = (int16_t)x;
@@ -220,6 +240,7 @@ static void
     record.font = FontSecondary;
     record.focus = focus;
     record.note = true;
+    record.title = title;
     strlcpy(record.text, text, sizeof(record.text));
     canvas->tap_callback(&record, canvas->tap_context);
 }
@@ -227,14 +248,30 @@ static void
 void canvas_tap_hint_note(Canvas* canvas, const char* text, bool focus) {
     furi_check(canvas);
     if(!text || !canvas->tap_callback) return;
-    canvas_tap_note_record(canvas, 0, 0, text, focus);
+    canvas_tap_note_record(canvas, 0, 0, text, focus, false);
 }
 
 void canvas_tap_hint_note_at(Canvas* canvas, uint8_t x, uint8_t y, const char* text) {
     furi_check(canvas);
     if(!text || !canvas->tap_callback) return;
     // Where canvas_draw_str would record the text: in the frame's coordinates, like drawn text
-    canvas_tap_note_record(canvas, x + canvas->offset_x, y + canvas->offset_y, text, false);
+    canvas_tap_note_record(canvas, x + canvas->offset_x, y + canvas->offset_y, text, false, false);
+}
+
+void canvas_tap_hint_title(Canvas* canvas) {
+    furi_assert(canvas);
+    canvas->tap_hint_title = true;
+}
+
+void canvas_tap_hint_title_note(Canvas* canvas, const char* text) {
+    furi_assert(canvas);
+    if(!text || !canvas->tap_callback) return;
+    canvas_tap_note_record(canvas, 0, 0, text, false, true);
+}
+
+void canvas_tap_hint_join(Canvas* canvas, uint8_t join) {
+    furi_assert(canvas);
+    canvas->tap_hint_join = join;
 }
 
 void canvas_reset(Canvas* canvas) {
