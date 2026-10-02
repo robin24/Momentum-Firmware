@@ -1,4 +1,5 @@
 #include "elements.h"
+#include "elements_join_i.h"
 #include <m-core.h>
 #include <assets_icons.h>
 #include <furi_hal_resources.h>
@@ -402,9 +403,10 @@ void elements_multiline_text_aligned(
         } else if((y + font_height) > canvas_height(canvas)) {
             line = furi_string_alloc_printf("%.*s...\n", chars_fit, start);
         } else {
+            // The dash takes the last place, and the next line starts at the letter it replaced
+            joins = chars_fit > 0 && elements_break_inside_word(start, start + chars_fit - 1);
             chars_fit -= 1; // account for the dash
             line = furi_string_alloc_printf("%.*s-\n", chars_fit, start);
-            joins = chars_fit > 0 && start[chars_fit - 1] != ' ' && start[chars_fit] != ' ';
         }
         canvas_draw_str_aligned(canvas, x, y, horizontal, vertical, furi_string_get_cstr(line));
         furi_string_free(line);
@@ -937,12 +939,8 @@ void elements_text_box(
     for(size_t i = 0; i < line_num; i++) {
         // A line the box broke inside a word continues the line before it: the screen reader
         // reads the word whole. A line after a newline or a space starts afresh
-        if(i > 0 && line[i].len > 0) {
-            char before = line[i].text[-1];
-            char after = line[i].text[0];
-            if(before != '\n' && before != ' ' && after != ' ' && after != '\n' && after != '\e') {
-                canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DIRECT);
-            }
+        if(i > 0 && line[i].len > 0 && elements_break_inside_word(text, line[i].text)) {
+            canvas_tap_hint_join(canvas, CANVAS_TAP_JOIN_DIRECT);
         }
         for(size_t j = 0; j < line[i].len; j++) {
             // Process format symbols
