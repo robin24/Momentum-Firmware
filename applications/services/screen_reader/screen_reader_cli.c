@@ -288,9 +288,9 @@ static void sr_cli_status(ScreenReader* sr) {
     ScreenReaderStats stats;
     screen_reader_get_stats(sr, &stats);
     printf("enabled: %s\r\n", screen_reader_is_enabled(sr) ? "yes" : "no");
-    // The last crash's address, the instruction that faulted or the return address of the failed
-    // check, and the build that stored it, kept across reboots and updates by check.c; a build
-    // from before the build register stored none
+    // The last crash's address, the instruction that faulted or a return address, and the build
+    // that stored it, kept across reboots and updates by check.c; a build from before the build
+    // register stored none
     uint32_t crash_address = furi_hal_rtc_get_register(FuriHalRtcRegisterFaultLr);
     uint32_t crash_build = furi_hal_rtc_get_register(FuriHalRtcRegisterFaultBuild);
     if(!crash_address) {

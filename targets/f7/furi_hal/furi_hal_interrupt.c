@@ -294,10 +294,17 @@ void NMI_Handler(void) {
 /** Make the crash keep the faulting instruction's address rather than the handler's (check.c) */
 void __furi_crash_set_fault_pc(uint32_t pc);
 
+/** Whether an address can hold code: in the flash, or in RAM, where the apps from the card run */
+static bool furi_hal_interrupt_is_code_address(uint32_t address) {
+    return (address >= FLASH_BASE && address < FLASH_BASE + FLASH_SIZE) ||
+           (address >= SRAM1_BASE && address < SRAM2B_BASE + SRAM2B_SIZE);
+}
+
 /** The address of the instruction that faulted: the pc the core pushed on entry to the fault
- * handler, word 6 of the frame. 0 when the frame can't be trusted: pushing or popping it failed,
- * as when a stack overflows into its guard, or it lies outside RAM, SRAM1 holding the main stack
- * and the apps' threads, SRAM2 the services' */
+ * handler, word 6 of the frame. When that is no code, as after a call through a null function
+ * pointer, the lr the core pushed, word 5: the return address of that call, odd. 0 when the frame
+ * can't be trusted: pushing or popping it failed, as when a stack overflows into its guard, or it
+ * lies outside RAM, SRAM1 holding the main stack and the apps' threads, SRAM2 the services' */
 static uint32_t furi_hal_interrupt_fault_pc(const uint32_t* frame) {
     const uint32_t frame_errors = SCB_CFSR_MSTKERR_Msk | SCB_CFSR_MUNSTKERR_Msk |
                                   SCB_CFSR_STKERR_Msk | SCB_CFSR_UNSTKERR_Msk;
@@ -306,7 +313,14 @@ static uint32_t furi_hal_interrupt_fault_pc(const uint32_t* frame) {
        start > SRAM2B_BASE + SRAM2B_SIZE - 8 * sizeof(uint32_t)) {
         return 0;
     }
-    return frame[6];
+    if(furi_hal_interrupt_is_code_address(frame[6])) {
+        return frame[6];
+    }
+    // A return address is odd, its lowest bit marking Thumb code
+    if((frame[5] & 1) && furi_hal_interrupt_is_code_address(frame[5])) {
+        return frame[5];
+    }
+    return 0;
 }
 
 /** A fault handler's entry, before any push: the handler named gets the frame the core pushed,

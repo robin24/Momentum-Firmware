@@ -216,23 +216,25 @@ FURI_NORETURN void __furi_crash_implementation(void) {
             ptr = (uint32_t) "Check serial logs";
         }
         furi_hal_rtc_set_fault_data(ptr);
-        // Keep an address across the reboot, and the build that stored it, since updates keep
-        // the register. After a hardware fault (HardFault, MemManage with the NULL pointer
-        // dereference, BusFault, UsageFault) it is the instruction that faulted, which the
-        // handler took from the frame the core pushed; such an address is even. Otherwise it is
-        // the lr stored on entry (GET_MESSAGE_AND_STORE_REGISTERS, `str lr, [r12, #48]`, index
-        // 12): the return address into the function whose check failed, or into the handler
-        // when its frame could not be trusted, as after a stack overflow; such an address is
-        // odd. The desktop's crash popup shows it as "at 0803ABCD", `sr status` as "last crash:
-        // at 0803ABCD in build 9028a849". addr2line on that build's firmware.elf names the line
-        // of an address in flash. Give it an even address as it is. Give it an odd one minus 2,
-        // inside the call, since the address itself is the instruction after the call, often a
-        // later line or another function because the call never returns. GCC merges identical
-        // crash-call sequences within a function, so the line can be another check of the same
-        // function; the function is certain (addr2line -i adds the chain of functions the named
-        // code was inlined into). An address starting with 20 (2000 to 2003) is inside an app
-        // loaded from the card and needs that app's elf. Writing an RTC backup register is the
-        // same call furi_hal_rtc_set_fault_data makes, safe with interrupts disabled.
+        // Keep an address across the reboot, and the build that stored it, since updates keep the
+        // register. After a hardware fault (HardFault, MemManage with the NULL pointer
+        // dereference, BusFault, UsageFault) it is the instruction that faulted, which the handler
+        // took from the frame the core pushed; such an address is even. After a call through a
+        // null function pointer, whose target is no code, the handler took the return address of
+        // that call from the frame instead, odd. Otherwise it is the lr stored on entry
+        // (GET_MESSAGE_AND_STORE_REGISTERS, `str lr, [r12, #48]`, index 12): the return address
+        // into the function whose check failed, or into the handler when its frame could not be
+        // trusted, as after a stack overflow; such an address is odd as well. The desktop's crash
+        // popup shows it as "at 0803ABCD", `sr status` as "last crash: at 0803ABCD in build
+        // 9028a849". addr2line on that build's firmware.elf names the line of an address in flash.
+        // Give it an even address as it is. Give it an odd one minus 2, inside the call, since the
+        // address itself is the instruction after the call, often a later line or another function
+        // because the call never returns. GCC merges identical crash-call sequences within a
+        // function, so the line can be another check of the same function; the function is certain
+        // (addr2line -i adds the chain of functions the named code was inlined into). An address
+        // starting with 20 (2000 to 2003) is inside an app loaded from the card and needs that
+        // app's elf. Writing an RTC backup register is the same call furi_hal_rtc_set_fault_data
+        // makes, safe with interrupts disabled.
         furi_hal_rtc_set_register(
             FuriHalRtcRegisterFaultLr,
             __furi_crash_fault_pc ? __furi_crash_fault_pc : __furi_check_registers[12]);
