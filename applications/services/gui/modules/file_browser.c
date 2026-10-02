@@ -139,8 +139,8 @@ typedef struct {
     bool is_root;
     bool folder_loading;
     bool list_loading;
-    char folder[CANVAS_TAP_TEXT_MAX]; /**< the open folder's name below the starting folder, for
-                                           the screen reader, which reads it as the title */
+    char folder[CANVAS_TAP_TEXT_MAX]; /**< the open folder's name, for the screen reader, which
+                                           reads it as the title; empty at a storage's root */
     uint32_t item_cnt;
     int32_t item_idx;
     int32_t array_offset;
@@ -289,6 +289,8 @@ void file_browser_stop(FileBrowser* browser) {
             model->item_idx = 0;
             model->array_offset = 0;
             model->list_offset = 0;
+            // A browser started again names no folder of before
+            model->folder[0] = '\0';
         },
         false);
 }
@@ -385,8 +387,8 @@ static void
     FileBrowser* browser = (FileBrowser*)context;
 
     int32_t load_offset = 0;
-    // The folder's name for the screen reader: at the starting folder none, the app has said
-    // where it is
+    // The folder's name for the screen reader, none at a storage's root, such as /ext, which has
+    // no parent folder entry either
     FuriString* folder = furi_string_alloc();
     if(!is_root) {
         path_extract_basename(file_browser_worker_get_path_current(browser->worker), folder);
@@ -636,8 +638,8 @@ static void browser_draw_list(Canvas* canvas, FileBrowserModel* model) {
                 canvas, 2, Y_OFFSET + 1 + i * FRAME_HEIGHT, BrowserItemIcons[item_type]);
         }
         if(!model->list_loading && model->item_idx == idx) {
-            // Below the starting folder the first entry is the parent folder's: it has no
-            // position, and the files and folders count from 1
+            // Below a storage's root the first entry is the parent folder's: it has no position,
+            // and the files and folders count from 1
             if(model->is_root) {
                 canvas_tap_hint_focus(canvas, (uint16_t)(idx + 1), (uint16_t)model->item_cnt);
             } else if(item_type == BrowserItemTypeBack) {
