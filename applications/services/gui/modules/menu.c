@@ -347,13 +347,22 @@ static void menu_draw_callback(Canvas* canvas, void* _model) {
                     item = MenuItemArray_get(model->items, index);
                     menu_get_name(item, name, true);
 
+                    // The number drawn apart from the name, so the screen reader's focus is the
+                    // app's name alone; it says the position itself
                     char indexstr[5];
                     snprintf(indexstr, sizeof(indexstr), "%d.", index);
-                    furi_string_replace_at(name, 0, 0, indexstr);
+                    canvas_draw_str(canvas, x_off + 2, y_off + 12, indexstr);
+                    size_t index_width = canvas_string_width(canvas, indexstr);
 
                     if(selected) canvas_tap_hint_focus(canvas, position + 1, items_count);
                     elements_scrollable_text_line(
-                        canvas, x_off + 2, y_off + 12, 60, name, scroll_counter, false);
+                        canvas,
+                        x_off + 2 + index_width,
+                        y_off + 12,
+                        60 - index_width,
+                        name,
+                        scroll_counter,
+                        false);
 
                     if(selected) {
                         canvas_set_color(canvas, ColorBlack);
