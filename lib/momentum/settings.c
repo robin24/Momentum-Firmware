@@ -135,10 +135,11 @@ static const struct {
     {setting_bool(desktop_anims)},
 };
 
-// Whether the settings were read with a card mounted. /int is a folder on the card
-// (storage_process_alias), so until then the settings in RAM are the compiled defaults: after a
-// boot without a card, and when a card has just gone in, before flipper_mount_callback loads it.
-// A save in that time, a screen reader chord, would write the defaults over the settings on it
+// Whether the settings were read from the card that is in. /int is a folder on the card
+// (storage_process_alias), so until then the settings in RAM are the compiled defaults, after a
+// boot without a card, or the card's before, after a card change: from the moment a card goes in
+// until flipper_mount_callback loads it. A save in that time, a screen reader chord, would write
+// them over the settings on it
 static bool momentum_settings_loaded = false;
 
 void momentum_settings_load(void) {
@@ -187,6 +188,10 @@ void momentum_settings_load(void) {
     if(card) momentum_settings_loaded = true;
 
     rgb_backlight_load_settings(momentum_settings.rgb_backlight);
+}
+
+void momentum_settings_card_removed(void) {
+    momentum_settings_loaded = false;
 }
 
 void momentum_settings_save(void) {
