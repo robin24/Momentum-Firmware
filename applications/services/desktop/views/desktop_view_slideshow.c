@@ -26,7 +26,10 @@ static void desktop_view_slideshow_draw(Canvas* canvas, void* model) {
     DesktopSlideshowViewModel* m = model;
 
     canvas_clear(canvas);
-    if(slideshow_is_loaded(m->slideshow)) {
+    // The GUI draws on its own thread: the view is current before its enter loads the slideshow,
+    // and still current after its exit freed it, so a draw may find none. At boots after an
+    // update, a draw before the first enter crashed here
+    if(m->slideshow && slideshow_is_loaded(m->slideshow)) {
         slideshow_draw(m->slideshow, canvas, 0, 0);
         // The update picture, after every update and at a first boot, holds its words as pixels.
         // A focus note, so the screen reader says it without a key press, where it keeps the home
@@ -161,6 +164,7 @@ static void desktop_view_slideshow_exit(void* context) {
 
     DesktopSlideshowViewModel* model = view_get_model(instance->view);
     slideshow_free(model->slideshow);
+    model->slideshow = NULL;
     view_commit_model(instance->view, false);
 }
 
