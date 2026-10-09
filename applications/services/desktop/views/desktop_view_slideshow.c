@@ -46,7 +46,10 @@ static bool desktop_view_slideshow_input(InputEvent* event, void* context) {
 
     DesktopSlideshowViewModel* model = view_get_model(instance->view);
     bool update_view = false;
-    if(model->slideshow->icon.frame_count == 7) {
+    if(!model->slideshow) {
+        // The dispatcher sends a key's release to the view that had its press, after a switch
+        // too: the release of the OK that closed the picture comes after the exit freed it
+    } else if(model->slideshow->icon.frame_count == 7) {
         if(event->type == InputTypeShort) {
             update_view = true;
             switch(model->slideshow->current_frame) {
@@ -123,7 +126,9 @@ static void desktop_first_start_timer_callback(void* context) {
 static void desktop_first_start_auto_timer_callback(void* context) {
     DesktopSlideshowView* instance = context;
     DesktopSlideshowViewModel* model = view_get_model(instance->view);
-    if(model->slideshow->current_frame < 5 && model->slideshow->current_frame > 1) {
+    if(!model->slideshow) {
+        // Already running on the timer thread when the exit stopped this timer and freed it
+    } else if(model->slideshow->current_frame < 5 && model->slideshow->current_frame > 1) {
         slideshow_advance(model->slideshow);
     } else {
         furi_timer_stop(instance->auto_timer);
