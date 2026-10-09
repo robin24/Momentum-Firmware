@@ -62,6 +62,15 @@ class Main(App):
                     elif result.startswith(b"No application"):
                         storage.read.until(storage.CLI_EOL)
                         break
+                    elif b"could not find command" in result:
+                        # The loader command is a plugin on the SD card, so a blank
+                        # card has none, and no app from the card can be running
+                        # either. The prompt follows on the same line, so there is
+                        # no further line to read
+                        self.logger.info(
+                            "No loader command on the card, so no app to close"
+                        )
+                        break
                     else:
                         self.logger.error(
                             f"Unexpected response: {result.decode('ascii')}"
