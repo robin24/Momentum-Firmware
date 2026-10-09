@@ -28,6 +28,12 @@ static void desktop_view_slideshow_draw(Canvas* canvas, void* model) {
     canvas_clear(canvas);
     if(slideshow_is_loaded(m->slideshow)) {
         slideshow_draw(m->slideshow, canvas, 0, 0);
+        // The update picture, after every update and at a first boot, holds its words as pixels.
+        // A focus note, so the screen reader says it without a key press, where it keeps the home
+        // screen's other changes quiet. OK, Right or Back closes it
+        if(slideshow_is_one_page(m->slideshow)) {
+            canvas_tap_hint_note(canvas, "Firmware updated, press OK to continue", true);
+        }
     }
 }
 
