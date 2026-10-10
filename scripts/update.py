@@ -6,7 +6,6 @@ import shutil
 import tarfile
 import zlib
 from os.path import exists, join
-import pathlib
 
 from flipper.app import App
 from flipper.assets.coprobin import CoproBinary, get_stack_type
@@ -147,17 +146,10 @@ class Main(App):
             )
         if self.args.resources:
             resources_basename = self.RESOURCE_FILE_NAME
-            SlideshowMain(no_exit=True)(
-                [
-                    "-i",
-                    str(
-                        pathlib.Path(self.args.resources)
-                        / "../../../assets/slideshow/firstboot"
-                    ),
-                    "-o",
-                    str(pathlib.Path(self.args.resources) / "dolphin/firstboot.bin"),
-                ]
-            )
+            # Sonar leaves out Momentum's first boot tutorial, here and below: its
+            # pictures hold their words as pixels, so a screen reader cannot read
+            # them. Without the package's firstboot.bin the updater shows the
+            # update picture at a first boot too
             if not self.package_resources(
                 self.args.resources, join(self.args.directory, resources_basename)
             ):
@@ -170,14 +162,6 @@ class Main(App):
                 return 2
 
         if self.args.splash:
-            SlideshowMain(no_exit=True)(
-                [
-                    "-i",
-                    str(pathlib.Path(self.args.splash).parent / "firstboot"),
-                    "-o",
-                    join(self.args.directory, "firstboot.bin"),
-                ]
-            )
             splash_args = [
                 "-i",
                 self.args.splash,

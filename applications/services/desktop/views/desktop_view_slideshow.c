@@ -26,8 +26,17 @@ static void desktop_view_slideshow_draw(Canvas* canvas, void* model) {
     DesktopSlideshowViewModel* m = model;
 
     canvas_clear(canvas);
-    if(slideshow_is_loaded(m->slideshow)) {
+    // The GUI draws on its own thread: the view is current before its enter loads the slideshow,
+    // and still current after its exit freed it, so a draw may find none. At boots after an
+    // update, a draw before the first enter crashed here
+    if(m->slideshow && slideshow_is_loaded(m->slideshow)) {
         slideshow_draw(m->slideshow, canvas, 0, 0);
+        // The update picture, after every update and at a first boot, holds its words as pixels.
+        // A focus note, so the screen reader says it without a key press, where it keeps the home
+        // screen's other changes quiet. OK, Right or Back closes it
+        if(slideshow_is_one_page(m->slideshow)) {
+            canvas_tap_hint_note(canvas, "Firmware updated, press OK to continue", true);
+        }
     }
 }
 
@@ -37,7 +46,10 @@ static bool desktop_view_slideshow_input(InputEvent* event, void* context) {
 
     DesktopSlideshowViewModel* model = view_get_model(instance->view);
     bool update_view = false;
-    if(model->slideshow->icon.frame_count == 7) {
+    if(!model->slideshow) {
+        // The dispatcher sends a key's release to the view that had its press, after a switch
+        // too: the release of the OK that closed the picture comes after the exit freed it
+    } else if(model->slideshow->icon.frame_count == 7) {
         if(event->type == InputTypeShort) {
             update_view = true;
             switch(model->slideshow->current_frame) {
@@ -114,7 +126,9 @@ static void desktop_first_start_timer_callback(void* context) {
 static void desktop_first_start_auto_timer_callback(void* context) {
     DesktopSlideshowView* instance = context;
     DesktopSlideshowViewModel* model = view_get_model(instance->view);
-    if(model->slideshow->current_frame < 5 && model->slideshow->current_frame > 1) {
+    if(!model->slideshow) {
+        // Already running on the timer thread when the exit stopped this timer and freed it
+    } else if(model->slideshow->current_frame < 5 && model->slideshow->current_frame > 1) {
         slideshow_advance(model->slideshow);
     } else {
         furi_timer_stop(instance->auto_timer);
@@ -155,6 +169,7 @@ static void desktop_view_slideshow_exit(void* context) {
 
     DesktopSlideshowViewModel* model = view_get_model(instance->view);
     slideshow_free(model->slideshow);
+    model->slideshow = NULL;
     view_commit_model(instance->view, false);
 }
 

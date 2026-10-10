@@ -27,8 +27,8 @@
  * 12. A hyphen with a digit on at least one side: "to" as the only hyphen between two digit runs
  *    of the same length, a space between a digit run and two or more letters, "dash" otherwise.
  * 13. A token that is the single upper case letter A is "ay".
- * 14. A slash between two digits is "of", as in the Passport's points: 18/100 is "eighteen of one
- *    hundred". Any other slash is "slash".
+ * 14. Every slash is "slash", between two digits too: 18/100 is "eighteen slash one hundred". A
+ *    date such as 15/03/2019, as NFC card parsers write one, read with "of" confused more.
  */
 #include "speech_text.h"
 
@@ -540,7 +540,7 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
             out_word(&o, "minus");
         } else if(c == '/') {
             // Rule 14
-            out_word(&o, between_digits ? "of" : "slash");
+            out_word(&o, "slash");
         } else if(c == '%') {
             out_word(&o, "percent");
         } else if(c == '&') {
