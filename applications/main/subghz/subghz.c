@@ -487,12 +487,22 @@ int32_t subghz_app(char* p) {
 
     furi_hal_power_suppress_charge_enter();
 
+    // The timer service runs below every app thread by default. Radio noise, FM238 while
+    // hopping for one, gives SubGhzWorker more pulses than it can decode, so it never waits and
+    // the timer service never ran. The next timer call then waited forever: the input service at
+    // the first key's release (it waits for the key's timer to stop), the views that start their
+    // timers. The Flipper froze, keys and screen reader included, until a restart. Raised as NFC
+    // and Bad USB raise it for their loading animations, the timer service keeps running
+    furi_timer_set_thread_priority(FuriTimerThreadPriorityElevated);
+
     view_dispatcher_run(subghz->view_dispatcher);
 
     if(subghz->timer) {
         furi_timer_stop(subghz->timer);
         furi_timer_free(subghz->timer);
     }
+
+    furi_timer_set_thread_priority(FuriTimerThreadPriorityNormal);
 
     furi_hal_power_suppress_charge_exit();
 
