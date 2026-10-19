@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include <input/input.h>
+#include <gui/canvas_i.h>
 #include <gui/elements.h>
 #include <assets_icons.h>
 #include <m-array.h>
@@ -275,6 +276,117 @@ static void subghz_view_rssi_draw(Canvas* canvas, SubGhzViewReceiverModel* model
     }
 }
 
+// The screen reader's words for this view. It shows a picture of scanning, a signal strength bar
+// and short labels: "Int" for the internal radio, a bare count such as "00", and while hopping a
+// frequency that changes ten times a second, which the reader would say every few seconds. A tap
+// hint just before a string is drawn gives the reader other words for it, or none; nothing drawn
+// changes. The hints do nothing while no screen reader listens
+
+/** Waiting for the first signal, the scanning picture shown */
+static bool subghz_view_receiver_scanning(const SubGhzViewReceiverModel* model) {
+    return model->history_item == 0 && model->mode == SubGhzViewReceiverModeLive;
+}
+
+/** The bottom bar's count is a number, not "History is FULL" or "Memory is FULL" */
+static bool subghz_view_receiver_count_is_number(const SubGhzViewReceiverModel* model) {
+    const char* str = furi_string_get_cstr(model->history_stat_str);
+    return str[0] >= '0' && str[0] <= '9';
+}
+
+/** Before the scanning words: what the receiver does, said first as the screen's title */
+static void
+    subghz_view_receiver_tap_scanning(Canvas* canvas, const SubGhzViewReceiverModel* model) {
+    char text[CANVAS_TAP_TEXT_MAX];
+    const char* none = subghz_view_receiver_count_is_number(model) ? ", no signals yet" : "";
+    if(model->repeater_state != SubGhzRepeaterStateOff) {
+        snprintf(text, sizeof(text), "Repeater on, resending each signal received");
+    } else if(model->hopping_enabled) {
+        snprintf(text, sizeof(text), "Hopping between frequencies%s", none);
+    } else if(!furi_string_empty(model->frequency_str)) {
+        snprintf(
+            text,
+            sizeof(text),
+            "Listening on %s MHz%s",
+            furi_string_get_cstr(model->frequency_str),
+            none);
+    } else {
+        snprintf(text, sizeof(text), "Listening on one frequency%s", none);
+    }
+    canvas_tap_hint_title(canvas);
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
+/** Before the radio and the modulation at the top, which the scene writes as
+ *  "Int        Mod: AM650": in words, with the Bin RAW icon below them. A note of its own for
+ *  the icon would join the line of the lock's prompt, two pixels lower */
+static void subghz_view_receiver_tap_preset(Canvas* canvas, const SubGhzViewReceiverModel* model) {
+    const char* preset = furi_string_get_cstr(model->preset_str);
+    if(preset[0] == '\0') return;
+    const char* modulation = strstr(preset, "Mod: ");
+    char text[CANVAS_TAP_TEXT_MAX];
+    snprintf(
+        text,
+        sizeof(text),
+        "%s radio, modulation %s%s",
+        model->device_type == SubGhzRadioDeviceTypeInternal ? "Internal" : "External",
+        modulation ? modulation + strlen("Mod: ") : preset,
+        model->bin_raw_enabled ? ", Bin RAW on" : "");
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
+/** Before the frequency in the bottom bar: with its unit, or nothing while hopping, and while
+ *  scanning on one frequency, which the title names */
+static void
+    subghz_view_receiver_tap_frequency(Canvas* canvas, const SubGhzViewReceiverModel* model) {
+    if(model->hopping_enabled ||
+       (subghz_view_receiver_scanning(model) && model->repeater_state == SubGhzRepeaterStateOff)) {
+        canvas_tap_hint_full_text(canvas, "", false);
+    } else if(!furi_string_empty(model->frequency_str)) {
+        char text[CANVAS_TAP_TEXT_MAX];
+        snprintf(text, sizeof(text), "%s MHz", furi_string_get_cstr(model->frequency_str));
+        canvas_tap_hint_full_text(canvas, text, false);
+    }
+}
+
+/** Before the count in the bottom bar: ", 1 signal", ", 12 signals", the comma keeping it apart
+ *  from the modulation's number before it. Nothing while scanning, when the title says there are
+ *  none yet and the repeater lists none. With a GPS module the bar takes turns with the satellites
+ *  every second; the reader hears the count either way, or it would say the bar each time it
+ *  changes. "History is FULL" is read as drawn */
+static void subghz_view_receiver_tap_count(Canvas* canvas, const SubGhzViewReceiverModel* model) {
+    if(!subghz_view_receiver_count_is_number(model)) return;
+    char text[CANVAS_TAP_TEXT_MAX] = "";
+    if(model->history_item > 0) {
+        snprintf(
+            text,
+            sizeof(text),
+            ", %u signal%s",
+            (unsigned)model->history_item,
+            model->history_item == 1 ? "" : "s");
+    } else if(!subghz_view_receiver_scanning(model)) {
+        snprintf(text, sizeof(text), ", no signals");
+    }
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
+/** Before a received signal's row: its whole name, and its repeats in words. Also while the time
+ *  stands in for the name, half a second after a move, which the reader would say and then cut
+ *  off with the name */
+static void subghz_view_receiver_tap_item(Canvas* canvas, const SubGhzReceiverMenuItem* item) {
+    char text[CANVAS_TAP_TEXT_MAX];
+    if(item->repeats) {
+        snprintf(
+            text,
+            sizeof(text),
+            "%s, %u times",
+            furi_string_get_cstr(item->item_str),
+            (unsigned)item->repeats + 1);
+    } else {
+        snprintf(text, sizeof(text), "%s", furi_string_get_cstr(item->item_str));
+    }
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
 void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
@@ -323,6 +435,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
             }
             elements_string_fit_width(canvas, str_buff, scrollbar ? MAX_LEN_PX - 7 : MAX_LEN_PX);
             canvas_draw_icon(canvas, 4, 2 + i * FRAME_HEIGHT, ReceiverItemIcons[item_menu->type]);
+            subghz_view_receiver_tap_item(canvas, item_menu);
             canvas_draw_str(canvas, 15, 9 + i * FRAME_HEIGHT, furi_string_get_cstr(str_buff));
             furi_string_reset(str_buff);
         }
@@ -343,6 +456,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
                 (model->device_type == SubGhzRadioDeviceTypeInternal) ? &I_Scanning_123x52 :
                                                                         &I_Fishing_123x52);
             canvas_set_font(canvas, FontPrimary);
+            subghz_view_receiver_tap_scanning(canvas, model);
             if(model->repeater_state != SubGhzRepeaterStateOff) {
                 canvas_draw_str(canvas, 59, 46, "Repeater...");
             } else if(model->hopping_enabled) {
@@ -380,9 +494,12 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         canvas_draw_str(canvas, 74, 62, "Locked");
         break;
     case SubGhzViewReceiverBarShowToUnlockPress:
+        subghz_view_receiver_tap_frequency(canvas, model);
         canvas_draw_str(canvas, 44, 62, furi_string_get_cstr(model->frequency_str));
 #ifdef SUBGHZ_EXT_PRESET_NAME
         if(model->history_item == 0 && model->mode == SubGhzViewReceiverModeLive) {
+            // The frequency's words have the unit
+            canvas_tap_hint_full_text(canvas, "", false);
             canvas_draw_str(
                 canvas,
                 44 + canvas_string_width(canvas, furi_string_get_cstr(model->frequency_str)) + 1,
@@ -392,6 +509,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
             const uint8_t vertical_offset = 7;
             const uint8_t horizontal_offset = 3;
             const uint8_t string_width = canvas_string_width(canvas, str);
+            subghz_view_receiver_tap_preset(canvas, model);
             canvas_draw_str(
                 canvas,
                 canvas_width(canvas) - (string_width + horizontal_offset),
@@ -404,6 +522,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         canvas_draw_str(canvas, 79, 62, furi_string_get_cstr(model->preset_str));
 #endif
         if(!furi_string_empty(model->history_stat_str)) {
+            subghz_view_receiver_tap_count(canvas, model);
             canvas_draw_str_aligned(
                 canvas,
                 114,
@@ -420,6 +539,9 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         canvas_set_font(canvas, FontSecondary);
         elements_bold_rounded_frame(canvas, 14, 8, 99, 48);
         elements_multiline_text(canvas, 65, 26, "To unlock\npress:");
+        // The keys are three Back icons, pressed within the second the lock timer counts
+        canvas_tap_hint_note_at(
+            canvas, 80, 26 + canvas_current_font_height(canvas), "Back 3 times quickly");
         canvas_draw_icon(canvas, 65, 42, &I_Pin_back_arrow_10x8);
         canvas_draw_icon(canvas, 80, 42, &I_Pin_back_arrow_10x8);
         canvas_draw_icon(canvas, 95, 42, &I_Pin_back_arrow_10x8);
@@ -432,10 +554,13 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         break;
     default: {
         const char* frequency_str = furi_string_get_cstr(model->frequency_str);
+        subghz_view_receiver_tap_frequency(canvas, model);
         canvas_draw_str(canvas, 44, 62, frequency_str);
 #ifdef SUBGHZ_EXT_PRESET_NAME
         if(model->history_item == 0 && model->mode == SubGhzViewReceiverModeLive) {
             if(*frequency_str) {
+                // The frequency's words have the unit
+                canvas_tap_hint_full_text(canvas, "", false);
                 canvas_draw_str(
                     canvas, 44 + canvas_string_width(canvas, frequency_str) + 1, 62, "MHz");
             }
@@ -443,6 +568,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
             const uint8_t vertical_offset = 7;
             const uint8_t horizontal_offset = 3;
             const uint8_t string_width = canvas_string_width(canvas, str);
+            subghz_view_receiver_tap_preset(canvas, model);
             canvas_draw_str(
                 canvas,
                 canvas_width(canvas) - (string_width + horizontal_offset),
@@ -455,6 +581,7 @@ void subghz_view_receiver_draw(Canvas* canvas, SubGhzViewReceiverModel* model) {
         canvas_draw_str(canvas, 79, 62, furi_string_get_cstr(model->preset_str));
 #endif
         if(!furi_string_empty(model->history_stat_str)) {
+            subghz_view_receiver_tap_count(canvas, model);
             canvas_draw_str_aligned(
                 canvas,
                 114,
