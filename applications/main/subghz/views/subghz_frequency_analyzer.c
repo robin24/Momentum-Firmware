@@ -3,6 +3,7 @@
 #include <furi.h>
 #include <input/input.h>
 #include <notification/notification_messages.h>
+#include <gui/canvas_i.h>
 #include <gui/elements.h>
 #include "../helpers/subghz_frequency_analyzer_worker.h"
 
@@ -108,6 +109,92 @@ void subghz_frequency_analyzer_draw_rssi(
     canvas_draw_line(canvas, x, y + 3, x + (RSSI_MAX - RSSI_MIN) * 2 / RSSI_SCALE, y + 3);
 }
 
+// The screen reader's words for this view. It draws the frequency found as a big number,
+// "000.000" while there is none, four recent frequencies with "---.---" for an empty one, a bar
+// of signal strength with the threshold as a cursor under it, labelled "RSSI", and buttons "T-"
+// and "+T". A tap hint just before a string is drawn gives the reader other words for it, or
+// none; nothing drawn changes. The hints do nothing while no screen reader listens
+
+/** A frequency in Hz as MHz without trailing zeros: 433920000 as "433.92", 433075000 as
+ *  "433.075", 315000000 as "315" */
+static void subghz_frequency_analyzer_tap_mhz(char* out, size_t size, uint32_t frequency) {
+    unsigned long mhz = frequency / 1000000;
+    unsigned long khz = frequency / 1000 % 1000;
+    if(khz == 0) {
+        snprintf(out, size, "%lu", mhz);
+    } else if(khz % 100 == 0) {
+        snprintf(out, size, "%lu.%lu", mhz, khz / 100);
+    } else if(khz % 10 == 0) {
+        snprintf(out, size, "%lu.%02lu", mhz, khz / 10);
+    } else {
+        snprintf(out, size, "%lu.%03lu", mhz, khz);
+    }
+}
+
+/** Before a recent frequency: its words with the unit and the times it came, ", selected" in
+ *  the frame that Down moves and OK takes, and "Recent:" before the first. A comma ends it when
+ *  the frequency beside it on its line follows. Each line of two is a row the reader reads */
+static void subghz_frequency_analyzer_tap_history(
+    Canvas* canvas,
+    const SubGhzFrequencyAnalyzerModel* model,
+    uint8_t i) {
+    char mhz[10]; // "4294.967" at most
+    subghz_frequency_analyzer_tap_mhz(mhz, sizeof(mhz), model->history_frequency[i]);
+    char times[12] = ""; // ", 255 times"
+    if(model->history_frequency_rx_count[i] > 0) {
+        snprintf(
+            times, sizeof(times), ", %u times", (unsigned)model->history_frequency_rx_count[i]);
+    }
+    bool selected = model->show_frame && model->max_index > 0 && i == model->selected_index;
+    bool beside = i % 2 == 0 && i + 1 < MAX_HISTORY && model->history_frequency[i + 1];
+    char text[CANVAS_TAP_TEXT_MAX];
+    snprintf(
+        text,
+        sizeof(text),
+        "%s%s MHz%s%s%s",
+        i == 0 ? "Recent: " : "",
+        mhz,
+        times,
+        selected ? ", selected" : "",
+        beside ? "," : "");
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
+/** In place of the big number, which is hidden: "No signal", or "Signal at 433.92 MHz". A note,
+ *  not the number's own words: the number is drawn inverted while the signal lasts, and an
+ *  inverted string is the focus, said at once each time it changes, where a note's changes are
+ *  said at most once every few seconds, the latest. The frequency is rounded to 10 kHz, as it
+ *  shifts by a few kHz from one scan to the next; the words stay while the number stays on a
+ *  moment after the signal */
+static void subghz_frequency_analyzer_tap_frequency(
+    Canvas* canvas,
+    const SubGhzFrequencyAnalyzerModel* model,
+    uint8_t x,
+    uint8_t y) {
+    canvas_tap_hint_full_text(canvas, "", false);
+    if(model->frequency == 0) {
+        canvas_tap_hint_note_at(canvas, x, y, "No signal");
+    } else {
+        char mhz[10];
+        subghz_frequency_analyzer_tap_mhz(
+            mhz, sizeof(mhz), (model->frequency + 5000) / 10000 * 10000);
+        char text[CANVAS_TAP_TEXT_MAX];
+        snprintf(text, sizeof(text), "Signal at %s MHz", mhz);
+        canvas_tap_hint_note_at(canvas, x, y, text);
+    }
+}
+
+/** Before the "RSSI" label: the threshold its cursor shows, which T- and +T move by 1 dB. A
+ *  weaker signal is not found */
+static void subghz_frequency_analyzer_tap_threshold(
+    Canvas* canvas,
+    const SubGhzFrequencyAnalyzerModel* model) {
+    int threshold = (int)(model->trigger + (model->trigger < 0 ? -0.5f : 0.5f));
+    char text[CANVAS_TAP_TEXT_MAX];
+    snprintf(text, sizeof(text), "Threshold %d dBm", threshold);
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
 static void subghz_frequency_analyzer_history_frequency_draw(
     Canvas* canvas,
     SubGhzFrequencyAnalyzerModel* model) {
@@ -136,10 +223,14 @@ static void subghz_frequency_analyzer_history_frequency_draw(
                 "%03ld.%03ld",
                 model->history_frequency[i] / 1000000 % 1000,
                 model->history_frequency[i] / 1000 % 1000);
+            subghz_frequency_analyzer_tap_history(canvas, model, i);
             canvas_draw_str(canvas, current_x, current_y, buffer);
         } else {
+            canvas_tap_hint_full_text(canvas, "", false);
             canvas_draw_str(canvas, current_x, current_y, "---.---");
         }
+        // The frequency's words have the unit and the times it came
+        canvas_tap_hint_full_text(canvas, "", false);
         if(model->history_frequency_rx_count[i] > 0) {
             snprintf(buffer, sizeof(buffer), "x%d", model->history_frequency_rx_count[i]);
             canvas_draw_str(canvas, current_x + 41, current_y, buffer);
@@ -161,9 +252,11 @@ void subghz_frequency_analyzer_draw(Canvas* canvas, SubGhzFrequencyAnalyzerModel
     canvas_set_font(canvas, FontSecondary);
 
     //canvas_draw_str(canvas, 0, 7, model->is_ext_radio ? "Ext" : "Int");
+    canvas_tap_hint_title(canvas);
     canvas_draw_str(canvas, 20, 7, "Frequency Analyzer");
 
     // RSSI
+    subghz_frequency_analyzer_tap_threshold(canvas, model);
     canvas_draw_str(canvas, 33, 62, "RSSI");
     subghz_frequency_analyzer_draw_rssi(
         canvas, model->rssi, model->rssi_last, model->trigger, 56, 57);
@@ -186,6 +279,7 @@ void subghz_frequency_analyzer_draw(Canvas* canvas, SubGhzFrequencyAnalyzerModel
         canvas_set_color(canvas, ColorBlack);
     }
 
+    subghz_frequency_analyzer_tap_frequency(canvas, model, 8, 26);
     canvas_draw_str(canvas, 8, 26, buffer);
     canvas_draw_icon(canvas, 96, 15, &I_MHz_25x11);
 
@@ -209,7 +303,9 @@ void subghz_frequency_analyzer_draw(Canvas* canvas, SubGhzFrequencyAnalyzerModel
 
     // Buttons hint
     canvas_set_font(canvas, FontSecondary);
+    canvas_tap_hint_full_text(canvas, "Lower threshold", false);
     elements_button_left(canvas, "T-");
+    canvas_tap_hint_full_text(canvas, "Raise threshold", false);
     elements_button_right(canvas, "+T");
 }
 
@@ -481,7 +577,10 @@ void subghz_frequency_analyzer_enter(void* context) {
             model->history_frequency_rx_count[1] = 0;
             model->history_frequency_rx_count[0] = 0;
             model->frequency_to_save = 0;
-            model->trigger = RSSI_MIN;
+            // The threshold kept from last time, which the worker has, rather than the lowest:
+            // the first frame drew its cursor at -97 dBm, and the reader said so, until the
+            // worker's first scan a moment later
+            model->trigger = subghz_frequency_analyzer_worker_get_trigger_level(instance->worker);
             model->is_ext_radio =
                 (subghz_txrx_radio_device_get(instance->txrx) != SubGhzRadioDeviceTypeInternal);
         },
