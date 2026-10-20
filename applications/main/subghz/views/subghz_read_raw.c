@@ -3,6 +3,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <input/input.h>
+#include <gui/canvas_i.h>
 #include <gui/elements.h>
 
 #include <assets_icons.h>
@@ -290,13 +291,85 @@ void subghz_read_raw_draw_threshold_rssi(Canvas* canvas, SubGhzReadRAWModel* mod
     canvas_draw_dot(canvas, x - 2, y);
 }
 
+// The screen reader's words for this view. Its top line is "433.92 AM650 R: Int 0 spl.": the
+// frequency without its unit, the modulation, "R: Int" or "R: Ext" for the radio, shortened to
+// "I" or "E" once a count is drawn, and the count of samples recorded, which rises ten times a
+// second while recording, so the reader would say it every few seconds. A tap hint just before
+// a string is drawn gives the reader other words for it; nothing drawn changes. The hints do
+// nothing while no screen reader listens
+
+/** Before the frequency: with its unit. The modulation after it is read as drawn, with a comma */
+static void subghz_read_raw_tap_frequency(Canvas* canvas, const SubGhzReadRAWModel* model) {
+    if(furi_string_empty(model->frequency_str)) return;
+    char text[CANVAS_TAP_TEXT_MAX];
+    snprintf(text, sizeof(text), "%s MHz", furi_string_get_cstr(model->frequency_str));
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
+/** Before the modulation: as drawn, with a comma before the radio's words */
+static void subghz_read_raw_tap_preset(Canvas* canvas, const SubGhzReadRAWModel* model) {
+    if(furi_string_empty(model->preset_str)) return;
+    char text[CANVAS_TAP_TEXT_MAX];
+    snprintf(text, sizeof(text), "%s,", furi_string_get_cstr(model->preset_str));
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
+/** Before "R: Int", "I" and their external forms: the radio in words */
+static void subghz_read_raw_tap_radio(Canvas* canvas, const SubGhzReadRAWModel* model) {
+    canvas_tap_hint_full_text(
+        canvas,
+        model->device_type == SubGhzRadioDeviceTypeInternal ? "internal radio," :
+                                                              "external radio,",
+        false);
+}
+
+/** Before the count drawn as "12345 spl.": "recording" while it rises, said when the recording
+ *  starts and not again until it stops; then the count in words, "12 thousand samples", as five
+ *  digits and more are spoken one by one. "RAW", drawn for a file opened, is read as drawn */
+static void subghz_read_raw_tap_samples(Canvas* canvas, const SubGhzReadRAWModel* model) {
+    if(model->status == SubGhzReadRAWStatusREC) {
+        canvas_tap_hint_full_text(canvas, "recording", false);
+        return;
+    }
+    const char* drawn = furi_string_get_cstr(model->sample_write);
+    if(drawn[0] < '0' || drawn[0] > '9') return;
+    char* end = NULL;
+    unsigned long samples = strtoul(drawn, &end, 10);
+    if(strcmp(end, " spl.") != 0) return;
+    char text[CANVAS_TAP_TEXT_MAX];
+    if(samples == 0) {
+        snprintf(
+            text,
+            sizeof(text),
+            "%s",
+            model->status == SubGhzReadRAWStatusStart ? "no samples yet" : "no samples");
+    } else if(samples == 1) {
+        snprintf(text, sizeof(text), "1 sample");
+    } else if(samples < 10000) {
+        snprintf(text, sizeof(text), "%lu samples", samples);
+    } else if(samples < 999500) {
+        snprintf(text, sizeof(text), "%lu thousand samples", (samples + 500) / 1000);
+    } else {
+        unsigned long tenths = (samples + 50000) / 100000;
+        if(tenths % 10 == 0) {
+            snprintf(text, sizeof(text), "%lu million samples", tenths / 10);
+        } else {
+            snprintf(text, sizeof(text), "%lu.%lu million samples", tenths / 10, tenths % 10);
+        }
+    }
+    canvas_tap_hint_full_text(canvas, text, false);
+}
+
 void subghz_read_raw_draw(Canvas* canvas, SubGhzReadRAWModel* model) {
     uint8_t graphics_mode = 1;
     canvas_set_color(canvas, ColorBlack);
     canvas_set_font(canvas, FontSecondary);
+    subghz_read_raw_tap_frequency(canvas, model);
     canvas_draw_str(canvas, 0, 7, furi_string_get_cstr(model->frequency_str));
+    subghz_read_raw_tap_preset(canvas, model);
     canvas_draw_str(canvas, 35, 7, furi_string_get_cstr(model->preset_str));
 
+    subghz_read_raw_tap_radio(canvas, model);
     if(model->not_showing_samples) {
         // TODO
         canvas_draw_str(
@@ -309,6 +382,7 @@ void subghz_read_raw_draw(Canvas* canvas, SubGhzReadRAWModel* model) {
             canvas, 70, 7, (model->device_type == SubGhzRadioDeviceTypeInternal) ? "I" : "E");
     }
 
+    subghz_read_raw_tap_samples(canvas, model);
     canvas_draw_str_aligned(
         canvas, 126, 0, AlignRight, AlignTop, furi_string_get_cstr(model->sample_write));
 
@@ -350,6 +424,7 @@ void subghz_read_raw_draw(Canvas* canvas, SubGhzReadRAWModel* model) {
 
     case SubGhzReadRAWStatusStart:
         elements_button_left(canvas, "Config");
+        canvas_tap_hint_full_text(canvas, "Record", false);
         elements_button_center(canvas, "REC");
         break;
 
