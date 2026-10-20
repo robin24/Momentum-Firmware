@@ -577,7 +577,10 @@ void subghz_frequency_analyzer_enter(void* context) {
             model->history_frequency_rx_count[1] = 0;
             model->history_frequency_rx_count[0] = 0;
             model->frequency_to_save = 0;
-            model->trigger = RSSI_MIN;
+            // The threshold kept from last time, which the worker has, rather than the lowest:
+            // the first frame drew its cursor at -97 dBm, and the reader said so, until the
+            // worker's first scan a moment later
+            model->trigger = subghz_frequency_analyzer_worker_get_trigger_level(instance->worker);
             model->is_ext_radio =
                 (subghz_txrx_radio_device_get(instance->txrx) != SubGhzRadioDeviceTypeInternal);
         },
