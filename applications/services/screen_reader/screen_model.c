@@ -161,6 +161,10 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         char text[SR_TEXT_MAX];
         sr_normalize(r->text, text, sizeof(text));
         if(strcmp(text, ". .") == 0) sr_copy(text, sizeof(text), "Parent folder");
+        // A button drawn with no label, an arrow alone, is still a button that does something
+        if(text[0] == '\0' && r->button != 0 && !sr_record_is_status(r)) {
+            sr_copy(text, sizeof(text), "button");
+        }
         // A scrolling list's arrows go, but a reading string is the text: Marauder's prompt, ">"
         if(text[0] == '\0' || (sr_is_arrow_token(text) && r->reading == SrReadingNone) ||
            sr_is_dashes(text)) {
