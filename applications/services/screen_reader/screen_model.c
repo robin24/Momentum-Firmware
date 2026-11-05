@@ -117,7 +117,9 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
 
     // Reading order: plain notes first (they have no position, and drawn text may pass above the
     // top edge, as the lock screen's sliding cover does), then by baseline, then by x, a note
-    // with a place among the drawn text. Insertion sort on indices.
+    // with a place among the drawn text. Buttons last, read last anyway: a scrolling text reports
+    // what doesn't fit on the display below it, and must not end up joined to a button.
+    // Insertion sort on indices.
     uint8_t order[SR_MAX_RECORDS];
     uint8_t n = frame->count > SR_MAX_RECORDS ? SR_MAX_RECORDS : frame->count;
     for(uint8_t i = 0; i < n; i++) {
@@ -127,8 +129,11 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             const SrRecord* b = &frame->records[i];
             bool a_plain = sr_record_is_plain_note(a);
             bool b_plain = sr_record_is_plain_note(b);
-            bool after = a_plain != b_plain ? b_plain :
-                                              (a->y > b->y) || (a->y == b->y && a->x > b->x);
+            bool a_button = sr_record_is_button(a);
+            bool b_button = sr_record_is_button(b);
+            bool after = a_button != b_button ? a_button :
+                         a_plain != b_plain   ? b_plain :
+                                                (a->y > b->y) || (a->y == b->y && a->x > b->x);
             if(!after) break;
             order[j] = order[j - 1];
             j--;
@@ -142,7 +147,12 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         if(r->focus) any_focus_hint = true;
         if(!sr_record_is_status(r)) screen->has_content = true;
         if(r->font == SrFontKeyboard && !sr_record_is_status(r)) screen->has_keyboard = true;
+        if(r->reading != SrReadingNone && screen->reading == SrReadingNone) {
+            screen->reading = r->reading == SrReadingPosition ? SrReadingOpen : r->reading;
+        }
     }
+    // Reading text in the keyboard font is text, a hex dump in a console, and no keyboard
+    if(screen->reading != SrReadingNone) screen->has_keyboard = false;
 
     SrRow* row = NULL;
     bool row_plain_note = false; // the current row is a plain note's
@@ -151,7 +161,11 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
         char text[SR_TEXT_MAX];
         sr_normalize(r->text, text, sizeof(text));
         if(strcmp(text, ". .") == 0) sr_copy(text, sizeof(text), "Parent folder");
-        if(text[0] == '\0' || sr_is_arrow_token(text) || sr_is_dashes(text)) continue;
+        // A scrolling list's arrows go, but a reading string is the text: Marauder's prompt, ">"
+        if(text[0] == '\0' || (sr_is_arrow_token(text) && r->reading == SrReadingNone) ||
+           sr_is_dashes(text)) {
+            continue;
+        }
 
         // A piece of a word drawn apart from the rest, a line broken inside a word or a word
         // drawn letter-spaced, goes onto the row before it with no space; the dash the line
@@ -161,6 +175,7 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             if(r->join == SrJoinDropDash && len > 0 && row->text[len - 1] == '-') {
                 row->text[len - 1] = '\0';
             }
+            if(r->join == SrJoinSpace) sr_append(row->text, sizeof(row->text), " ");
             sr_append(row->text, sizeof(row->text), text);
             continue;
         }
@@ -193,6 +208,7 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
             row->font = r->font;
             row->note = r->note; // a row a note begins is never the title, unless marked so
             row->title = r->title;
+            row->reading = r->reading;
             row->kind = kind;
             row->button = r->button;
             row_plain_note = plain_note;
@@ -215,9 +231,13 @@ void sr_screen_build(const SrFrame* frame, SrScreen* screen) {
     }
     for(uint8_t i = 0; i < screen->row_count; i++) {
         const SrRow* c = &screen->rows[i];
-        if(c->kind == SrRowFocus && c->font == SrFontKeyboard) screen->on_keyboard = true;
+        if(c->kind == SrRowFocus && c->font == SrFontKeyboard &&
+           screen->reading == SrReadingNone) {
+            screen->on_keyboard = true;
+        }
+        // Reading text is never the title: it changes as the text moves
         if(screen->title_row < 0 && c->kind == SrRowNormal && !c->note &&
-           c->font == SrFontPrimary && c->y <= SR_TITLE_MAX_Y) {
+           c->reading == SrReadingNone && c->font == SrFontPrimary && c->y <= SR_TITLE_MAX_Y) {
             screen->title_row = (int8_t)i;
         }
     }
@@ -414,6 +434,13 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
     if(prev->content_layer != cur->content_layer) return true;
     if(prev->has_content != cur->has_content) return true;
     if(strcmp(sr_title_text(prev), sr_title_text(cur)) != 0) return true;
+    // A scrolling text opening after anything else, a new page of a log say, is a new screen;
+    // otherwise the stops of a text change and it stays the same screen
+    if(cur->reading == SrReadingOpen && prev->reading != SrReadingOpen) return true;
+    if(prev->reading != SrReadingNone && cur->reading != SrReadingNone &&
+       cur->reading != SrReadingOpen) {
+        return false;
+    }
     // Fewer than half of the previous rows still present, ignoring their roles: a list
     // that scrolled by one keeps most rows, a new screen keeps almost none. On a keyboard the
     // rows of keys do not count: they change case when the field empties or fills
@@ -429,6 +456,22 @@ static bool sr_screen_changed(const SrScreen* prev, const SrScreen* cur) {
     return total > 0 && kept * 2 < total;
 }
 
+/** The words of a scrolling text's position note, "" when it has none. */
+static const char* sr_position_note(const SrScreen* s) {
+    for(uint8_t i = 0; i < s->row_count; i++) {
+        if(s->rows[i].reading == SrReadingPosition) return s->rows[i].text;
+    }
+    return "";
+}
+
+/** The index of the first focus row, 0 when there's none or it isn't known. */
+static uint16_t sr_focus_index(const SrScreen* s) {
+    for(uint8_t i = 0; i < s->row_count; i++) {
+        if(s->rows[i].kind == SrRowFocus) return s->rows[i].index;
+    }
+    return 0;
+}
+
 static void
     sr_screen_announcement(const SrModel* model, const SrScreen* s, char* out, size_t out_size) {
     out[0] = '\0';
@@ -437,7 +480,10 @@ static void
     char buttons[SR_ANN_TEXT_MAX] = "";
     if(model->verbosity >= 1) sr_append_buttons(s, buttons, sizeof(buttons));
     const char* more = s->overflow ? ", and more" : "";
-    size_t keep = strlen(buttons) + (buttons[0] != '\0' ? 2 : 0) + strlen(more);
+    // So does a scrolling text's position: Up and Down reach what's cut, if it's known they can
+    const char* position = sr_position_note(s);
+    size_t keep = strlen(buttons) + (buttons[0] != '\0' ? 2 : 0) + strlen(more) +
+                  (position[0] != '\0' ? strlen(position) + 2 : 0);
     size_t size = out_size > keep + 1 ? out_size - keep : 1;
 
     char focus[SR_ANN_TEXT_MAX];
@@ -454,14 +500,22 @@ static void
         }
         if(out[0] != '\0') sr_append(out, size, ". ");
         sr_append(out, size, focus);
-        if(model->verbosity >= 2) sr_append_focus_position(s, out, size);
+        // A text says on opening how long it is, at any verbosity: nothing else tells it
+        if(model->verbosity >= 2 || s->reading != SrReadingNone) {
+            sr_append_focus_position(s, out, size);
+        }
     } else {
         for(uint8_t i = 0; i < s->row_count; i++) {
             const SrRow* row = &s->rows[i];
             if(row->kind != SrRowNormal || (int8_t)i == s->title_row) continue;
+            if(row->reading == SrReadingPosition) continue;
             if(out[0] != '\0') sr_append(out, size, ". ");
             sr_append(out, size, row->text);
         }
+    }
+    if(position[0] != '\0') {
+        if(out[0] != '\0') sr_append(out, out_size, ". ");
+        sr_append(out, out_size, position);
     }
     if(buttons[0] != '\0') {
         if(out[0] != '\0') sr_append(out, out_size, ". ");
@@ -572,10 +626,27 @@ size_t sr_model_process(
         bool same_focus = strcmp(focus_now, focus_was) == 0 ||
                           (cur->on_keyboard && model->prev.on_keyboard &&
                            sr_same_ignoring_case(focus_now, focus_was));
-        if(focus_now[0] != '\0' && !same_focus) {
+        bool focus_said = false;
+        bool focus_moved = focus_now[0] != '\0' && !same_focus;
+        bool reading_stop = focus_now[0] != '\0' && cur->reading != SrReadingNone &&
+                            model->prev.reading != SrReadingNone;
+        if(reading_stop) {
+            // A key moves the reader, onto an identical line too. Without a key, only a live
+            // stop's new text is news, paced like any other change. Text that moves the place
+            // while it's being read back says nothing
+            bool index_moved = sr_focus_index(cur) != sr_focus_index(&model->prev);
+            focus_moved = key_recent && (focus_moved || index_moved);
+            if(!key_recent && cur->reading == SrReadingLive && !same_focus) {
+                sr_emit(out, out_max, &n, SrAnnChange, false, focus_now);
+                focus_said = true;
+            }
+        }
+        if(focus_moved) {
             sr_copy(text, sizeof(text), focus_now);
             if(model->verbosity >= 2) sr_append_focus_position(cur, text, sizeof(text));
             sr_emit(out, out_max, &n, SrAnnFocus, true, text);
+        } else if(focus_said) {
+            // said above
         } else if(sr_typed_character(&model->prev, cur, text, sizeof(text))) {
             sr_emit(out, out_max, &n, SrAnnTyped, true, text);
         } else {
