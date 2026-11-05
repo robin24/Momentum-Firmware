@@ -1,8 +1,11 @@
 #include "text_box.h"
+#include "text_stops.h"
 #include <gui/canvas.h>
+#include <gui/canvas_i.h>
 #include <gui/elements.h>
 #include <furi.h>
 #include <stdint.h>
+#include <string.h>
 
 #define TEXT_BOX_TEXT_WIDTH           (120)
 #define TEXT_BOX_TEXT_HEIGHT          (56)
@@ -12,10 +15,15 @@
 #define TEXT_BOX_LINES_SCROLL_SPEED_FAST       (5)
 #define TEXT_BOX_LINES_SCROLL_SPEED_SATURATION (9)
 
+#define TEXT_BOX_EMPTY_DELAY_MS (1000)
+
+_Static_assert(TEXT_STOPS_ROW_CHARS < CANVAS_TAP_TEXT_MAX, "a row must fit one tapped string");
+
 struct TextBox {
     View* view;
 
     uint16_t button_held_for_ticks;
+    FuriTimer* empty_timer;
 };
 
 typedef struct {
@@ -33,6 +41,14 @@ typedef struct {
     FuriString* text_line;
 
     bool formatted;
+
+    // With the screen reader listening, the text is read by stops: see text_stops.h
+    bool reading; /**< the reader was listening at the last draw */
+    bool opened; /**< the cursor knows this text; off until the first draw of a new one */
+    int16_t pending; /**< Up and Down since the last draw, which alone can measure text */
+    TextStopsCursor cursor;
+    FuriTimer* empty_timer; /**< the box has stayed empty long enough to say so */
+    bool empty_due;
 } TextBoxModel;
 
 static void text_box_process_down(TextBox* text_box, uint8_t lines) {
@@ -40,7 +56,9 @@ static void text_box_process_down(TextBox* text_box, uint8_t lines) {
         text_box->view,
         TextBoxModel * model,
         {
-            if(model->scroll_pos + lines < model->scroll_num) {
+            if(model->reading) {
+                model->pending++;
+            } else if(model->scroll_pos + lines < model->scroll_num) {
                 model->scroll_pos += lines;
             } else {
                 if(model->scroll_num > 0) {
@@ -56,7 +74,9 @@ static void text_box_process_up(TextBox* text_box, uint8_t lines) {
         text_box->view,
         TextBoxModel * model,
         {
-            if(model->scroll_pos - lines > 0) {
+            if(model->reading) {
+                model->pending--;
+            } else if(model->scroll_pos - lines > 0) {
                 model->scroll_pos -= lines;
             } else {
                 model->scroll_pos = 0;
@@ -245,6 +265,83 @@ static void text_box_prepare_model(Canvas* canvas, TextBoxModel* model) {
     model->line_offset = model->scroll_pos;
 }
 
+static uint8_t text_box_glyph_width(char c, void* context) {
+    return (uint8_t)canvas_glyph_width(context, (uint8_t)c);
+}
+
+/** With the screen reader listening: the text from the current stop's first row, the rows wrapped
+ *  at spaces, and only that stop for the reader to read. */
+static void text_box_draw_reading(Canvas* canvas, TextBoxModel* model) {
+    const size_t font_height = canvas_current_font_height(canvas);
+    const TextStopsLayout layout = {
+        .glyph_width = text_box_glyph_width,
+        .context = canvas,
+        .row_width = TEXT_BOX_TEXT_WIDTH,
+        .rows_max = MAX(TEXT_BOX_TEXT_HEIGHT / font_height, 1u),
+    };
+    const bool at_end = model->focus == TextBoxFocusEnd;
+    TextStopsCursor* cursor = &model->cursor;
+
+    // An app may have cut its text before it tells us
+    if(cursor->offset > strlen(model->text)) model->formatted = false;
+    if(!model->formatted) {
+        if(model->opened) {
+            text_stops_cursor_refresh(cursor, model->text, &layout, at_end);
+        } else {
+            text_stops_cursor_open(cursor, model->text, &layout, at_end);
+        }
+        model->opened = true;
+        model->formatted = true;
+    }
+    if(model->pending) {
+        text_stops_cursor_step(cursor, model->text, &layout, at_end, model->pending);
+        model->pending = 0;
+    }
+
+    elements_slightly_rounded_frame(canvas, 0, 0, 124, 64);
+    if(cursor->count > 1) elements_scrollbar(canvas, cursor->index - 1, cursor->count);
+
+    if(cursor->index == 0) {
+        // A console with no reply is not silent. Not at once: nearly every command's first line
+        // comes within a moment, and "Empty" would be said before each of them
+        if(model->empty_due) {
+            canvas_tap_hint_reading(canvas, CANVAS_TAP_READING_STOP);
+            canvas_tap_note(canvas, 3, 11, "Empty");
+        } else if(!furi_timer_is_running(model->empty_timer)) {
+            furi_timer_start(model->empty_timer, TEXT_BOX_EMPTY_DELAY_MS);
+        }
+        return;
+    }
+    model->empty_due = false;
+
+    TextStop stop = {0};
+    text_stops_next(model->text, cursor->offset, &layout, &stop);
+    const uint8_t reading = cursor->live ? CANVAS_TAP_READING_LIVE : CANVAS_TAP_READING_STOP;
+    size_t pos = cursor->offset;
+    uint8_t row_number = 0;
+    TextStopsBreak before = TextStopsBreakLine;
+    for(size_t y = 11; y < 64 && model->text[pos] != '\0'; y += font_height) {
+        TextStopsRow row;
+        text_stops_row(model->text, pos, &layout, &row);
+        if(row_number == 0) {
+            canvas_tap_hint_focus(canvas, cursor->index, cursor->count);
+            canvas_tap_hint_reading(canvas, reading);
+        } else if(row_number < stop.rows) {
+            canvas_tap_hint_join(
+                canvas,
+                before == TextStopsBreakSpace ? CANVAS_TAP_JOIN_SPACE : CANVAS_TAP_JOIN_DIRECT);
+            canvas_tap_hint_reading(canvas, reading);
+        } else {
+            canvas_tap_hint_full_text(canvas, "", false);
+        }
+        furi_string_set_strn(model->text_line, model->text + row.start, row.length);
+        canvas_draw_str(canvas, 3, y, furi_string_get_cstr(model->text_line));
+        before = row.ends;
+        pos = row.next;
+        row_number++;
+    }
+}
+
 static void text_box_view_draw_callback(Canvas* canvas, void* _model) {
     TextBoxModel* model = _model;
 
@@ -257,6 +354,19 @@ static void text_box_view_draw_callback(Canvas* canvas, void* _model) {
         canvas_set_font(canvas, FontSecondary);
     } else if(model->font == TextBoxFontHex) {
         canvas_set_font(canvas, FontKeyboard);
+    }
+
+    const bool reader = canvas->tap_callback != NULL;
+    if(reader != model->reading) {
+        // The reader went on or off with the text open: start over in the other way of reading
+        model->reading = reader;
+        model->opened = false;
+        model->pending = 0;
+        model->formatted = false;
+    }
+    if(reader) {
+        text_box_draw_reading(canvas, model);
+        return;
     }
 
     if(!model->formatted) {
@@ -273,9 +383,20 @@ static void text_box_view_draw_callback(Canvas* canvas, void* _model) {
     elements_multiline_text(canvas, 3, 11, furi_string_get_cstr(model->text_on_screen));
 }
 
+static void text_box_empty_timer_callback(void* context) {
+    TextBox* text_box = context;
+    with_view_model(
+        text_box->view,
+        TextBoxModel * model,
+        { model->empty_due = model->opened && model->cursor.index == 0; },
+        true);
+}
+
 TextBox* text_box_alloc(void) {
     TextBox* text_box = malloc(sizeof(TextBox));
     text_box->view = view_alloc();
+    text_box->empty_timer =
+        furi_timer_alloc(text_box_empty_timer_callback, FuriTimerTypeOnce, text_box);
     view_set_context(text_box->view, text_box);
     view_allocate_model(text_box->view, ViewModelTypeLocking, sizeof(TextBoxModel));
     view_set_draw_callback(text_box->view, text_box_view_draw_callback);
@@ -290,6 +411,11 @@ TextBox* text_box_alloc(void) {
             model->text_line = furi_string_alloc();
             model->formatted = false;
             model->font = TextBoxFontText;
+            model->reading = false;
+            model->opened = false;
+            model->pending = 0;
+            model->empty_timer = text_box->empty_timer;
+            model->empty_due = false;
         },
         true);
 
@@ -299,6 +425,7 @@ TextBox* text_box_alloc(void) {
 void text_box_free(TextBox* text_box) {
     furi_check(text_box);
 
+    furi_timer_free(text_box->empty_timer);
     with_view_model(
         text_box->view,
         TextBoxModel * model,
@@ -334,6 +461,10 @@ void text_box_reset(TextBox* text_box) {
             model->scroll_num = 0;
             model->scroll_pos = 0;
             model->formatted = false;
+            model->reading = false;
+            model->opened = false;
+            model->pending = 0;
+            model->empty_due = false;
         },
         true);
 }
