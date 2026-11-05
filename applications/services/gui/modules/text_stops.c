@@ -166,6 +166,15 @@ static bool cursor_matches(const TextStopsCursor* cursor, const char* text, cons
     return memcmp(text + stop->start, cursor->anchor, cursor->anchor_length) == 0;
 }
 
+/** FNV-1a of a stop's bytes. */
+static uint32_t stop_hash(const char* text, const TextStop* stop) {
+    uint32_t hash = 2166136261u;
+    for(size_t i = stop->start; i < stop->end; i++) {
+        hash = (hash ^ (uint8_t)text[i]) * 16777619u;
+    }
+    return hash;
+}
+
 /** Stand on this stop, with what follows from it. */
 static void cursor_arrive(
     TextStopsCursor* cursor,
@@ -209,12 +218,13 @@ void text_stops_cursor_refresh(
     // Following, only a new complete line moves the reader: Down may have gone past the newest
     // one's first stop, to the rest of a long line or to a line still unfinished
     bool past_newest = cursor->index > cursor->newest_index;
-    bool stays = at_end && cursor->following && past_newest && found_index > 0 &&
-                 newest_index == cursor->newest_index;
+    uint32_t newest_hash = newest_index ? stop_hash(text, &newest) : 0;
+    bool same_newest = newest_index == cursor->newest_index && newest_hash == cursor->newest_hash;
+    bool stays = at_end && cursor->following && past_newest && found_index > 0 && same_newest;
     bool along = at_end && cursor->following && !stays;
 
     cursor->count = index;
-    cursor->newest_offset = newest_index ? newest.start : 0;
+    cursor->newest_hash = newest_hash;
     cursor->newest_index = newest_index;
 
     if(index == 0) {

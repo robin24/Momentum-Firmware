@@ -100,7 +100,8 @@ typedef struct {
     uint16_t count;
     bool following; /**< on or after the newest complete line, or no line is complete */
     bool live; /**< a change of this stop without a key is news */
-    size_t newest_offset; /**< the newest complete line's first stop */
+    uint32_t newest_hash; /**< of the newest complete line's first stop: when a line is dropped for
+                               each one added, its index alone doesn't show a new one came */
     uint16_t newest_index; /**< 0 when no line is complete */
     char anchor[TEXT_STOPS_ANCHOR_BYTES]; /**< the start of the current stop, to find it again */
     uint8_t anchor_length;
