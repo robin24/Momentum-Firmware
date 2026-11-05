@@ -93,6 +93,60 @@ bool text_stops_prev(
     const TextStopsLayout* layout,
     TextStop* stop);
 
+/** Where the reader is in a text that may grow, be trimmed at its start or be replaced. */
+typedef struct {
+    size_t offset; /**< the current stop's first byte */
+    uint16_t index; /**< 1-based, 0 when the text has no stops */
+    uint16_t count;
+    bool following; /**< on or after the newest complete line, or no line is complete */
+    bool live; /**< a change of this stop without a key is news */
+    size_t newest_offset; /**< the newest complete line's first stop */
+    uint16_t newest_index; /**< 0 when no line is complete */
+    char anchor[TEXT_STOPS_ANCHOR_BYTES]; /**< the start of the current stop, to find it again */
+    uint8_t anchor_length;
+    bool anchor_complete; /**< the stop's line was complete; an unfinished one may still grow */
+} TextStopsCursor;
+
+/** Start on a text. With at_end, the text box's TextBoxFocusEnd, on the newest complete line's
+ *  first stop and following it; otherwise on the first stop. */
+void text_stops_cursor_open(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStopsLayout* layout,
+    bool at_end);
+
+/** The text changed. Following, a new complete line takes the reader along. Otherwise the reader
+ *  stays on its stop, the nearest at or before the old place that matches, because trimming only
+ *  moves text towards the start; with no match, on the first stop, the oldest line still kept. */
+void text_stops_cursor_refresh(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStopsLayout* layout,
+    bool at_end);
+
+/** Move by steps stops, down when positive, stopping at the first and the last. The offset must be
+ *  a stop's start in this text, so call it after text_stops_cursor_refresh. */
+void text_stops_cursor_step(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStopsLayout* layout,
+    bool at_end,
+    int16_t steps);
+
+/** Whether a scrolling text's opening reads one more stop of stop_chars, with taken stops of
+ *  used_chars read so far. The first stop is always read. */
+bool text_stops_opening_takes(uint16_t taken, size_t used_chars, size_t stop_chars);
+
+/** Up (step < 0) or Down in a scrolling text that opened with taken of total stops read. From the
+ *  opening, Down goes to the next stop not heard and Up to the last stop heard, read alone; after
+ *  that, one stop at a time within 1 to total. *current is 0 during the opening. */
+void text_stops_opening_step(
+    bool* opening,
+    uint16_t* current,
+    uint16_t taken,
+    uint16_t total,
+    int8_t step);
+
 #ifdef __cplusplus
 }
 #endif

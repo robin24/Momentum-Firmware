@@ -146,3 +146,151 @@ bool text_stops_prev(
     }
     return false;
 }
+
+static void cursor_remember(TextStopsCursor* cursor, const char* text, const TextStop* stop) {
+    size_t length = stop->end - stop->start;
+    if(length > TEXT_STOPS_ANCHOR_BYTES) length = TEXT_STOPS_ANCHOR_BYTES;
+    memcpy(cursor->anchor, text + stop->start, length);
+    cursor->anchor_length = (uint8_t)length;
+    cursor->anchor_complete = stop->complete;
+}
+
+static bool cursor_matches(const TextStopsCursor* cursor, const char* text, const TextStop* stop) {
+    size_t length = stop->end - stop->start;
+    if(length < cursor->anchor_length) return false;
+    // A complete line shorter than the anchor is all there: "a" is not found in "abc"
+    if(cursor->anchor_complete && cursor->anchor_length < TEXT_STOPS_ANCHOR_BYTES &&
+       length != cursor->anchor_length) {
+        return false;
+    }
+    return memcmp(text + stop->start, cursor->anchor, cursor->anchor_length) == 0;
+}
+
+/** Stand on this stop, with what follows from it. */
+static void cursor_arrive(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStop* stop,
+    uint16_t index,
+    bool at_end) {
+    cursor->offset = stop->start;
+    cursor->index = index;
+    cursor->following = at_end && (cursor->newest_index == 0 || index >= cursor->newest_index);
+    cursor->live = !at_end || (cursor->following && stop->complete);
+    cursor_remember(cursor, text, stop);
+}
+
+void text_stops_cursor_refresh(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStopsLayout* layout,
+    bool at_end) {
+    TextStop stop, first = {0}, last = {0}, newest = {0}, found = {0};
+    uint16_t index = 0, last_index = 0, newest_index = 0, found_index = 0;
+    size_t from = 0;
+
+    while(text_stops_next(text, from, layout, &stop)) {
+        index++;
+        if(index == 1) first = stop;
+        last = stop;
+        last_index = index;
+        if(stop.complete && stop.line_start) {
+            newest = stop;
+            newest_index = index;
+        }
+        if(stop.start <= cursor->offset && cursor->anchor_length > 0 &&
+           cursor_matches(cursor, text, &stop)) {
+            found = stop;
+            found_index = index;
+        }
+        from = stop.next;
+    }
+
+    // Following, only a new complete line moves the reader: Down may have gone past the newest
+    // one's first stop, to the rest of a long line or to a line still unfinished
+    bool past_newest = cursor->index > cursor->newest_index;
+    bool stays = at_end && cursor->following && past_newest && found_index > 0 &&
+                 newest_index == cursor->newest_index;
+    bool along = at_end && cursor->following && !stays;
+
+    cursor->count = index;
+    cursor->newest_offset = newest_index ? newest.start : 0;
+    cursor->newest_index = newest_index;
+
+    if(index == 0) {
+        cursor->offset = 0;
+        cursor->index = 0;
+        cursor->following = at_end;
+        cursor->live = !at_end;
+        cursor->anchor_length = 0;
+    } else if(along) {
+        if(newest_index) {
+            cursor_arrive(cursor, text, &newest, newest_index, at_end);
+        } else {
+            cursor_arrive(cursor, text, &last, last_index, at_end);
+        }
+    } else if(found_index) {
+        cursor_arrive(cursor, text, &found, found_index, at_end);
+    } else {
+        cursor_arrive(cursor, text, &first, 1, at_end);
+    }
+}
+
+void text_stops_cursor_open(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStopsLayout* layout,
+    bool at_end) {
+    memset(cursor, 0, sizeof(*cursor));
+    cursor->following = at_end;
+    text_stops_cursor_refresh(cursor, text, layout, at_end);
+}
+
+void text_stops_cursor_step(
+    TextStopsCursor* cursor,
+    const char* text,
+    const TextStopsLayout* layout,
+    bool at_end,
+    int16_t steps) {
+    if(cursor->index == 0 || steps == 0) return;
+    TextStop stop, other;
+    if(!text_stops_next(text, cursor->offset, layout, &stop)) return;
+    uint16_t index = cursor->index;
+    while(steps > 0 && text_stops_next(text, stop.next, layout, &other)) {
+        stop = other;
+        index++;
+        steps--;
+    }
+    while(steps < 0 && text_stops_prev(text, stop.start, layout, &other)) {
+        stop = other;
+        index--;
+        steps++;
+    }
+    cursor_arrive(cursor, text, &stop, index, at_end);
+}
+
+bool text_stops_opening_takes(uint16_t taken, size_t used_chars, size_t stop_chars) {
+    return taken == 0 || used_chars + stop_chars <= TEXT_STOPS_OPENING_CHARS;
+}
+
+void text_stops_opening_step(
+    bool* opening,
+    uint16_t* current,
+    uint16_t taken,
+    uint16_t total,
+    int8_t step) {
+    if(total == 0) return;
+    if(*opening) {
+        if(step < 0) {
+            *current = taken;
+            *opening = false;
+        } else if(taken < total) {
+            *current = taken + 1;
+            *opening = false;
+        }
+    } else if(step < 0) {
+        if(*current > 1) (*current)--;
+    } else if(*current < total) {
+        (*current)++;
+    }
+}
