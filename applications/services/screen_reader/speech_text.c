@@ -29,6 +29,11 @@
  * 13. A token that is the single upper case letter A is "ay".
  * 14. Every slash is "slash", between two digits too: 18/100 is "eighteen slash one hundred". A
  *    date such as 15/03/2019, as NFC card parsers write one, read with "of" confused more.
+ * 15. Six pairs of hex digits joined by colons are a MAC address, spelled pair by pair with a comma
+ *    after each pair: a0:1b is "ay zero, one B". Tried before every token.
+ * 16. A hyphen before a letter that is not inside a token starts a word, a command's option as in
+ *    select -a: "dash".
+ * 17. A hash before a letter is "hash", as in Marauder's echo of a command; otherwise "number".
  */
 #include "speech_text.h"
 
@@ -195,20 +200,48 @@ static const Term terms[] = {
     {"mAh", "milliamp hours"},
     {"MNTM", "momentum"},
     {"XP", "experience"},
+    // The network words of WiFi Marauder, and of other apps that print them in lower case
+    {"ap", "ay P"},
+    {"ssid", "S S I D"},
+    {"sta", "S T ay"},
+    {"rssi", "R S S I"},
+    {"Ch", "C H"},
+    {"pmkid", "P M K I D"},
+    {"bt", "B T"},
+    {"sd", "S D"},
+    {"dns", "D N S"},
+    {"ssh", "S S H"},
+    {"http", "H T T P"},
+    {"https", "H T T P S"},
+    {"smtp", "S M T P"},
+    {"rdp", "R D P"},
+    {"csa", "C S ay"},
+    {"sae", "S ay E"},
+    // Marauder's commands and settings, words written together
+    {"stopscan", "stop scan"},
+    {"scanall", "scan all"},
+    {"pcaps", "pea caps"},
+    {"ForcePMKID", "Force P M K I D"},
+    {"ForceProbe", "Force Probe"},
+    {"SavePCAP", "Save pea cap"},
+    {"EnableLED", "Enable L E D"},
+    {"EPDeauth", "E P dee auth"},
 };
 
 /** Rule 7: upper case words that are real words, read as words rather than spelled. */
 static const char* const stop_words[] = {
-    "ON",    "OFF",   "NO",   "YES",  "NEW",  "ADD",   "ALL",  "SET",   "RUN",   "SAVE",  "SEND",
-    "READ",  "EXIT",  "BACK", "MENU", "INFO", "TEST",  "FILE", "EDIT",  "OPEN",  "LOCK",  "DEMO",
-    "HOLD",  "PLAY",  "STOP", "TIME", "DATE", "MODE",  "AUTO", "EASY",  "NONE",  "MAX",   "MIN",
-    "RAW",   "WARN",  "FAIL", "DONE", "LOW",  "HIGH",  "FULL", "START", "RESET", "CLEAR", "ENTER",
-    "EMPTY", "RETRY", "MORE", "FREE", "UP",   "DOWN",  "LEFT", "RIGHT", "HOME",  "AND",   "OR",
-    "NOT",   "THE",   "GO",   "BAD",  "KEY",  "CARD",  "TAG",  "APP",   "APPS",  "TAB",   "SUB",
-    "WAIT",  "SCAN",  "SKIP", "NEXT", "PREV", "ERROR", "OKAY", "LOAD",  "COPY",  "MOVE",  "NAME",
-    "TYPE",  "SIZE",  "PAGE", "LIST", "VIEW", "ZERO",  "TEXT", "SAM",   "AT",    "IN",    "OF",
-    "TO",    "IS",    "AS",   "BY",   "IT",   "AN",    "BE",   "DO",    "IF",    "SO",    "WE",
-    "FOR",   "NOW",   "END",  "TOP",  "BIT",  "HEX",   "BIN",  "DEC",
+    "ON",    "OFF",   "NO",    "YES",   "NEW",   "ADD",   "ALL",  "SET",  "RUN",   "SAVE",
+    "SEND",  "READ",  "EXIT",  "BACK",  "MENU",  "INFO",  "TEST", "FILE", "EDIT",  "OPEN",
+    "LOCK",  "DEMO",  "HOLD",  "PLAY",  "STOP",  "TIME",  "DATE", "MODE", "AUTO",  "EASY",
+    "NONE",  "MAX",   "MIN",   "RAW",   "WARN",  "FAIL",  "DONE", "LOW",  "HIGH",  "FULL",
+    "START", "RESET", "CLEAR", "ENTER", "EMPTY", "RETRY", "MORE", "FREE", "UP",    "DOWN",
+    "LEFT",  "RIGHT", "HOME",  "AND",   "OR",    "NOT",   "THE",  "GO",   "BAD",   "KEY",
+    "CARD",  "TAG",   "APP",   "APPS",  "TAB",   "SUB",   "WAIT", "SCAN", "SKIP",  "NEXT",
+    "PREV",  "ERROR", "OKAY",  "LOAD",  "COPY",  "MOVE",  "NAME", "TYPE", "SIZE",  "PAGE",
+    "LIST",  "VIEW",  "ZERO",  "TEXT",  "SAM",   "AT",    "IN",   "OF",   "TO",    "IS",
+    "AS",    "BY",    "IT",    "AN",    "BE",    "DO",    "IF",   "SO",   "WE",    "FOR",
+    "NOW",   "END",   "TOP",   "BIT",   "HEX",   "BIN",   "DEC",  "ITEM", "ITEMS", "STAGE",
+    "TRUE",  "FALSE", "WRITE", "BEGIN", "CLOSE",
 };
 
 static bool token_equals(const char* s, size_t n, const char* word) {
@@ -495,6 +528,39 @@ static bool single_character(const char* in, Out* o) {
     return false;
 }
 
+#define MAC_ADDRESS_LENGTH 17 /* six pairs of hex digits and the five colons between them */
+
+/** Rule 15: whether a MAC address starts at in[i], with no letter, digit or colon touching it. */
+static bool is_mac_address(const char* in, size_t i, size_t n) {
+    if(n - i < MAC_ADDRESS_LENGTH) return false;
+    if(i > 0 && (is_alnum(in[i - 1]) || in[i - 1] == ':')) return false;
+    size_t end = i + MAC_ADDRESS_LENGTH;
+    if(end < n && (is_alnum(in[end]) || in[end] == ':')) return false;
+    for(size_t k = 0; k < MAC_ADDRESS_LENGTH; k++) {
+        char c = in[i + k];
+        bool hex = is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if(k % 3 == 2 ? c != ':' : !hex) return false;
+    }
+    return true;
+}
+
+/** Rule 15: every digit and letter by its name, a comma after each pair. */
+static void out_mac_address(Out* o, const char* s) {
+    for(size_t k = 0; k < MAC_ADDRESS_LENGTH; k++) {
+        char c = s[k];
+        if(k % 3 == 2) {
+            out_punct(o, ',');
+        } else if(is_digit(c)) {
+            out_word(o, ones[(size_t)(c - '0')]);
+        } else if(c == 'a' || c == 'A') {
+            out_word(o, "ay");
+        } else {
+            char letter[2] = {is_lower(c) ? (char)(c - 'a' + 'A') : c, '\0'};
+            out_word(o, letter);
+        }
+    }
+}
+
 /** Rule 2: whether s[i] belongs to a token. */
 static bool in_token(const char* s, size_t i, size_t n) {
     char c = s[i];
@@ -516,6 +582,11 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
     size_t n = strlen(in);
     size_t i = 0;
     while(i < n) {
+        if(is_mac_address(in, i, n)) {
+            out_mac_address(&o, in + i);
+            i += MAC_ADDRESS_LENGTH;
+            continue;
+        }
         if(in_token(in, i, n)) {
             size_t start = i;
             while(i < n && in_token(in, i, n))
@@ -538,6 +609,9 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
             // Rule 11. The hyphen is outside every token although a digit follows, so it is at
             // the start of the text or after a character that is not alphanumeric.
             out_word(&o, "minus");
+        } else if(c == '-' && i + 1 < n && is_alpha(in[i + 1])) {
+            // Rule 16. As in rule 11, nothing alphanumeric comes before it
+            out_word(&o, "dash");
         } else if(c == '/') {
             // Rule 14
             out_word(&o, "slash");
@@ -550,7 +624,8 @@ size_t speech_text_expand(const char* in, char* out, size_t out_size) {
         } else if(c == '=') {
             out_word(&o, "equals");
         } else if(c == '#') {
-            out_word(&o, "number");
+            // Rule 17
+            out_word(&o, i + 1 < n && is_alpha(in[i + 1]) ? "hash" : "number");
         } else if(c == '@') {
             out_word(&o, "at");
         } else if(c == '*') {

@@ -21,6 +21,13 @@
 /** How a drawn string continues the one before it, for canvas_tap_hint_join */
 #define CANVAS_TAP_JOIN_DIRECT    1 /**< no space between them: a word drawn in pieces */
 #define CANVAS_TAP_JOIN_DROP_DASH 2 /**< no space, and the dash drawn at the line break goes */
+#define CANVAS_TAP_JOIN_SPACE     3 /**< one space: a line wrapped at a space */
+
+/* Reading text, from canvas_tap_hint_reading; the same values as SrReading in screen_model.h */
+#define CANVAS_TAP_READING_STOP     1 /**< a stop that keys move */
+#define CANVAS_TAP_READING_LIVE     2 /**< a stop whose change without a key is news */
+#define CANVAS_TAP_READING_OPEN     3 /**< a scrolling text's opening */
+#define CANVAS_TAP_READING_POSITION 4 /**< the opening's "4 of 7" */
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,6 +63,7 @@ typedef struct {
     uint8_t button; /**< button hint: 0 none, 1 left, 2 center, 3 right, 4 up, 5 down */
     uint8_t join; /**< CANVAS_TAP_JOIN_*: continues the string drawn before it, 0 if not */
     bool title; /**< the screen's title, from canvas_tap_hint_title or a title note */
+    uint8_t reading; /**< CANVAS_TAP_READING_*, 0 if not reading text */
     uint16_t index; /**< 1-based position from the focus hint, 0 if unknown */
     uint16_t count; /**< item count from the focus hint, 0 if unknown */
     char text[CANVAS_TAP_TEXT_MAX];
@@ -85,6 +93,7 @@ struct Canvas {
     uint8_t tap_hint_button;
     uint8_t tap_hint_join;
     bool tap_hint_title;
+    uint8_t tap_hint_reading;
     uint16_t tap_hint_index;
     uint16_t tap_hint_count;
     bool tap_hint_full;
@@ -202,8 +211,12 @@ void canvas_tap_hint_title_note(Canvas* canvas, const char* text);
 
 /** The next drawn string continues the one drawn before it, with no space: a line broken inside
  * a word, or a word drawn in pieces. join is CANVAS_TAP_JOIN_DIRECT, or
- * CANVAS_TAP_JOIN_DROP_DASH when the string before ends with a dash drawn only at the break. */
+ * CANVAS_TAP_JOIN_DROP_DASH when the string before ends with a dash drawn only at the break, or
+ * CANVAS_TAP_JOIN_SPACE for a line wrapped at a space. */
 void canvas_tap_hint_join(Canvas* canvas, uint8_t join);
+
+/** The next drawn string or canvas_tap_note is reading text of this kind, CANVAS_TAP_READING_*. */
+void canvas_tap_hint_reading(Canvas* canvas, uint8_t kind);
 
 /** The next drawn string is a shortened or scrolled fragment of full_text.
  * With verify_prefix, the hint is used only if the drawn string (minus a trailing "...")

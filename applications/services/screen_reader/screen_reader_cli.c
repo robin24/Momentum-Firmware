@@ -138,6 +138,7 @@ static void sr_cli_screen(ScreenReader* sr) {
             r->note ? " NOTE" : "");
         if(r->count) printf(" %u/%u", (unsigned)r->index, (unsigned)r->count);
         if(r->button) printf(" button=%s", sr_button_name(r->button));
+        if(r->reading) printf(" reading=%u", (unsigned)r->reading);
         printf(" \"%s\"\r\n", r->text);
     }
     free(frame);

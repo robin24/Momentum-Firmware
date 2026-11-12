@@ -47,6 +47,17 @@ enum {
     SrJoinNone = 0,
     SrJoinDirect = 1, /**< no space between them: a word drawn in pieces, letter-spaced */
     SrJoinDropDash = 2, /**< no space, and the dash the line wrapper drew at the break goes */
+    SrJoinSpace = 3, /**< one space: a line wrapped at a space, which sr_normalize would strip */
+};
+
+/** What kind of reading text a string is, from canvas_tap_hint_reading: the stops of a text box or
+ *  a scrolling text. A reading screen stays the same screen while its stops change. */
+enum {
+    SrReadingNone = 0,
+    SrReadingStop = 1, /**< a stop that keys move: a change without a key says nothing */
+    SrReadingLive = 2, /**< a stop whose change without a key is news */
+    SrReadingOpen = 3, /**< a scrolling text's opening, read as ordinary rows */
+    SrReadingPosition = 4, /**< the opening's "4 of 7", which keeps its room like the buttons */
 };
 
 /** One drawn string as captured by the GUI text tap. */
@@ -63,6 +74,7 @@ typedef struct {
     uint8_t join; /**< SrJoin: this string continues the one drawn before it, a word that the
                        wrapper broke or that was drawn in pieces */
     bool title; /**< the screen's title whatever its font, drawn or a note */
+    uint8_t reading; /**< SrReading: reading text of this kind, from canvas_tap_hint_reading */
     uint16_t index; /**< 1-based position from the module, 0 if unknown */
     uint16_t count; /**< item count from the module, 0 if unknown */
     char text[SR_TEXT_MAX];
@@ -92,6 +104,7 @@ typedef struct {
     uint8_t font;
     bool note; /**< a note begins the row, which is never the title unless marked so */
     bool title; /**< a record marked as the screen's title begins the row */
+    uint8_t reading; /**< SrReading of the record that begins the row */
     SrRowKind kind;
     uint8_t button; /**< button side hint of the first record, 0 if none */
     uint16_t index;
@@ -108,6 +121,8 @@ typedef struct {
     bool has_keyboard; /**< at least one record in the keyboard font */
     bool on_keyboard; /**< the focus is a key in the keyboard font: an on-screen keyboard, whose
                            prompt and field are read before the key */
+    uint8_t reading; /**< SrReading of the first reading record; a position note counts as the
+                          opening it belongs to */
     bool overflow;
 } SrScreen;
 
